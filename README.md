@@ -1,2 +1,2 @@
 # Speech-Recognition-DSP
-Speech Recognition Preprocessing Module
+Speech Recognition Preprocessing Module DSP
