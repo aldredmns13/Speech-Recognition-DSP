@@ -1,21 +1,17 @@
 import streamlit as st
 import numpy as np
 import soundfile as sf
-import sounddevice as sd
 import noisereduce as nr
 import os
-import matlab.engine
-from io import BytesIO
 import tempfile
-from PIL import Image
 
-st.set_page_config(page_title="Speech Recognition Preprocessing Module", layout="centered")
+try:
+    import matlab.engine
+    has_matlab = True
+except ImportError:
+    has_matlab = False
 
-def record_audio(duration=5, fs=44100):
-    st.info(f"Recording for {duration} seconds...")
-    audio = sd.rec(int(duration * fs), samplerate=fs, channels=1)
-    sd.wait()
-    return audio, fs
+st.set_page_config(page_title="Speech Recognition Preprocessing", layout="centered")
 
 def save_audio_file(file_path, data, samplerate):
     sf.write(file_path, data, samplerate)
@@ -30,40 +26,27 @@ def run_matlab_plot(original_path, filtered_path):
     eng.quit()
     return fig_path
 
-st.title("Speech Recognition Preprocessing Module")
-st.subheader("Clean your noisy Audio with Us!")
+st.title("🎙️ Speech Recognition Preprocessing Module")
+st.markdown("Upload a `.wav` file, denoise it, and visualize the waveform using MATLAB (optional).")
 
-option = st.radio("Select Input Method", ("Insert Audio from Mic", "Insert Audio from Files"))
+uploaded_file = st.file_uploader("📁 Upload .wav Audio File", type=["wav"])
 
-if option == "Insert Audio from Mic":
-    if st.button("🎤 Start Recording"):
-        audio, fs = record_audio()
-        original_path = os.path.join(tempfile.gettempdir(), "original_mic.wav")
-        save_audio_file(original_path, audio, fs)
+if uploaded_file:
+    audio_data, fs = sf.read(uploaded_file)
+    original_path = os.path.join(tempfile.gettempdir(), "original_file.wav")
+    save_audio_file(original_path, audio_data, fs)
 
-        denoised_audio = denoise_audio(audio, fs)
-        filtered_path = os.path.join(tempfile.gettempdir(), "filtered_mic.wav")
-        save_audio_file(filtered_path, denoised_audio, fs)
+    denoised_audio = denoise_audio(audio_data, fs)
+    filtered_path = os.path.join(tempfile.gettempdir(), "filtered_file.wav")
+    save_audio_file(filtered_path, denoised_audio, fs)
 
-        st.success("Audio recorded and filtered!")
+    st.success("Audio successfully filtered!")
 
-        if st.button("📈 Show MATLAB Sine Waves"):
-            fig_path = run_matlab_plot(original_path, filtered_path)
-            st.image(fig_path, caption="Original vs Filtered (Mic Input)")
+    st.audio(original_path, format="audio/wav", start_time=0)
+    st.audio(filtered_path, format="audio/wav", start_time=0)
 
-elif option == "Insert Audio from Files":
-    uploaded_file = st.file_uploader("Upload .wav File", type=["wav"])
-    if uploaded_file:
-        audio_data, fs = sf.read(uploaded_file)
-        original_path = os.path.join(tempfile.gettempdir(), "original_file.wav")
-        save_audio_file(original_path, audio_data, fs)
-
-        denoised_audio = denoise_audio(audio_data, fs)
-        filtered_path = os.path.join(tempfile.gettempdir(), "filtered_file.wav")
-        save_audio_file(filtered_path, denoised_audio, fs)
-
-        st.success("Audio uploaded and filtered!")
-
-        if st.button("📈 Show MATLAB Sine Waves"):
-            fig_path = run_matlab_plot(original_path, filtered_path)
-            st.image(fig_path, caption="Original vs Filtered (File Input)")
+    if has_matlab and st.button("📊 Show MATLAB Sine Waves"):
+        fig_path = run_matlab_plot(original_path, filtered_path)
+        st.image(fig_path, caption="Original vs Filtered (MATLAB)")
+    elif not has_matlab:
+        st.warning("MATLAB not available. Plotting is disabled.")
