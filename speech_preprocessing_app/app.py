@@ -27,7 +27,7 @@ def run_matlab_plot(original_path, filtered_path):
     return fig_path
 
 st.title("🎙️ Speech Recognition Preprocessing Module")
-st.markdown("Upload a `.wav` file, denoise it, and visualize the waveform using MATLAB (optional).")
+st.markdown("Upload a `.wav` file, denoise it, and visualize the waveform using MATLAB.")
 
 uploaded_file = st.file_uploader("📁 Upload .wav Audio File", type=["wav"])
 
