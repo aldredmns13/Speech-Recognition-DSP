@@ -29,17 +29,17 @@ def plot_waveform(audio, sr, title):
     ax.set_ylabel("Amplitude")
     st.pyplot(fig)
 
-# ------------------ Streamlit UI ------------------
+# ------------------ UI ------------------
 
-st.title("🎤 Speech Preprocessing (Mic/File ➜ Filtered Output)")
+st.title("🎤 Speech Preprocessing (Mic or File Input → Cleaned Audio)")
 
-# Session state to hold mic data
-if "recorded_audio" not in st.session_state:
-    st.session_state.recorded_audio = []
+# Session state setup
+if "start_recording" not in st.session_state:
+    st.session_state.start_recording = False
 
 # Mic Audio Processor
 class AudioProcessor(AudioProcessorBase):
-    def __init__(self) -> None:
+    def __init__(self):
         self.frames = []
 
     def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
@@ -47,60 +47,72 @@ class AudioProcessor(AudioProcessorBase):
         self.frames.append(audio)
         return frame
 
-# Input Options
-input_method = st.radio("Select input method:", ["Upload WAV file", "Record from Microphone (Browser)"])
+# Choose input method
+input_method = st.radio("Select Input Source", ["Upload .wav File", "Record via Microphone (Browser)"])
 
 sr = 48000
 
-if input_method == "Upload WAV file":
-    uploaded = st.file_uploader("Upload .wav file", type=["wav"])
-    if uploaded is not None:
+if input_method == "Upload .wav File":
+    uploaded = st.file_uploader("Upload a WAV file", type=["wav"])
+    if uploaded:
         audio, sr = sf.read(uploaded)
         if audio.ndim > 1:
             audio = audio[:, 0]
 
-        st.subheader("🎧 Input Audio")
+        st.subheader("🎧 Original Audio")
         st.audio(uploaded)
-        plot_waveform(audio, sr, "Input Waveform")
+        plot_waveform(audio, sr, "Original Audio Waveform")
 
-        # Process
         filtered = apply_fir_bandpass(audio, sr)
         denoised = reduce_noise(filtered, sr)
         cleaned = normalize_audio(denoised)
 
-        st.subheader("🧼 Cleaned Output")
+        st.subheader("🧼 Cleaned Audio")
         buf_out = BytesIO()
         sf.write(buf_out, cleaned, sr, format='wav')
         st.audio(buf_out)
-        plot_waveform(cleaned, sr, "Output Waveform")
+        plot_waveform(cleaned, sr, "Cleaned Audio Waveform")
 
-elif input_method == "Record from Microphone (Browser)":
-    st.subheader("🎙️ Step 1: Record Mic Input")
-    webrtc_ctx = webrtc_streamer(
-        key="mic",
-        audio_processor_factory=AudioProcessor,
-        media_stream_constraints={"audio": True, "video": False},
-        async_processing=True,
-    )
+elif input_method == "Record via Microphone (Browser)":
+    st.subheader("🎙️ Step 1: Start Recording")
 
-    if st.button("🔁 Process Last 10 Seconds"):
-        if webrtc_ctx.audio_processor:
-            # Combine recent frames
-            audio = np.concatenate(webrtc_ctx.audio_processor.frames)[-sr * 10:]
-            st.audio(sf.write(BytesIO(), audio, sr, format='wav').getvalue())
-            plot_waveform(audio, sr, "Input Mic Waveform")
+    if not st.session_state.start_recording:
+        if st.button("🎙️ Start Mic"):
+            st.session_state.start_recording = True
+            st.experimental_rerun()
 
-            # Filter
-            filtered = apply_fir_bandpass(audio, sr)
-            denoised = reduce_noise(filtered, sr)
-            cleaned = normalize_audio(denoised)
+    if st.session_state.start_recording:
+        webrtc_ctx = webrtc_streamer(
+            key="mic",
+            audio_processor_factory=AudioProcessor,
+            media_stream_constraints={"audio": True, "video": False},
+            async_processing=True,
+        )
 
-            st.subheader("🧼 Cleaned Output")
-            buffer = BytesIO()
-            sf.write(buffer, cleaned, sr, format='wav')
-            st.audio(buffer)
-            plot_waveform(cleaned, sr, "Output Mic Output")
-        else:
-            st.warning("⚠️ Please record audio first before clicking process.")
+        st.info("Recording from browser mic... speak clearly for at least 10 seconds.")
 
+        if st.button("✅ Process Last 10 Seconds"):
+            if webrtc_ctx and webrtc_ctx.audio_processor:
+                raw_audio = np.concatenate(webrtc_ctx.audio_processor.frames)
+                if len(raw_audio) < sr * 10:
+                    st.warning("You need at least 10 seconds of speech.")
+                else:
+                    raw_audio = raw_audio[-sr * 10:]
 
+                    st.subheader("🎧 Original Mic Audio")
+                    buffer_in = BytesIO()
+                    sf.write(buffer_in, raw_audio, sr, format='wav')
+                    st.audio(buffer_in)
+                    plot_waveform(raw_audio, sr, "Original Mic Waveform")
+
+                    filtered = apply_fir_bandpass(raw_audio, sr)
+                    denoised = reduce_noise(filtered, sr)
+                    cleaned = normalize_audio(denoised)
+
+                    st.subheader("🧼 Cleaned Mic Audio")
+                    buffer_out = BytesIO()
+                    sf.write(buffer_out, cleaned, sr, format='wav')
+                    st.audio(buffer_out)
+                    plot_waveform(cleaned, sr, "Cleaned Mic Waveform")
+            else:
+                st.warning("Recording has not started or no frames available.")
