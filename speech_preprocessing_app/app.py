@@ -54,3 +54,20 @@ elif input_option == "Record from microphone":
         sf.write(buffer, reduced_noise, 44100, format='wav')
         st.audio(buffer)
 
+import streamlit as st
+from streamlit_webrtc import webrtc_streamer
+import numpy as np
+import noisereduce as nr
+import av
+
+def audio_frame_callback(frame):
+    audio = frame.to_ndarray(format="flt32")
+    reduced_noise = nr.reduce_noise(y=audio.flatten(), sr=48000)
+    # Convert back to frame (do minimal processing here to keep real-time)
+    new_frame = av.AudioFrame.from_ndarray(reduced_noise.astype(np.float32), format="flt32", layout="mono")
+    new_frame.sample_rate = 48000
+    return new_frame
+
+st.title("Mic Noise Reduction with streamlit-webrtc")
+
+webrtc_streamer(key="mic", audio_frame_callback=audio_frame_callback, media_stream_constraints={"audio": True, "video": False})
