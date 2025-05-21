@@ -5,17 +5,11 @@ import numpy as np
 import soundfile as sf
 import matplotlib.pyplot as plt
 from io import BytesIO
-from scipy.signal import firwin, lfilter
 import noisereduce as nr
 
-# ------------------ DSP Functions ------------------
-
-def apply_fir_bandpass(audio, sr, lowcut=300.0, highcut=3400.0, numtaps=101):
-    fir_coeff = firwin(numtaps, [lowcut, highcut], pass_zero=False, fs=sr)
-    return lfilter(fir_coeff, 1.0, audio)
+# DSP Helpers
 
 def reduce_noise(audio, sr):
-    # Mild noise reduction to preserve natural voice
     return nr.reduce_noise(y=audio, sr=sr)
 
 def normalize_audio(audio):
@@ -25,7 +19,6 @@ def normalize_audio(audio):
     return audio / max_val * 0.9
 
 def amplify_audio(audio, gain=2.0):
-    # Apply gain and clip to avoid distortion
     audio_amp = audio * gain
     audio_amp = np.clip(audio_amp, -1.0, 1.0)
     return audio_amp
@@ -39,28 +32,28 @@ def plot_waveform(audio, sr, title):
     ax.set_ylabel("Amplitude")
     st.pyplot(fig)
 
-# ------------------ UI ------------------
+# Streamlit UI
 
 st.title("🎤 Speech Preprocessing Module (Mic or File Input → Enhanced Audio)")
 
-# Session state setup
 if "start_recording" not in st.session_state:
     st.session_state.start_recording = False
 
-# Mic Audio Processor
 class AudioProcessor(AudioProcessorBase):
     def __init__(self):
         self.frames = []
 
     def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
         audio = frame.to_ndarray().flatten()
+        # Convert int16 to float32 in [-1,1] range immediately
+        if audio.dtype != np.float32:
+            audio = audio.astype(np.float32) / 32768.0
         self.frames.append(audio)
         return frame
 
-# Choose input method
 input_method = st.radio("Select Input Source", ["Upload .wav File", "Record via Microphone (Browser)"])
 
-sr = 48000
+sr = 48000  # Make sure to keep this consistent everywhere
 
 if input_method == "Upload .wav File":
     uploaded = st.file_uploader("Upload a WAV file", type=["wav"])
@@ -73,10 +66,8 @@ if input_method == "Upload .wav File":
         st.audio(uploaded)
         plot_waveform(audio, sr, "Original Audio Waveform")
 
-        filtered = apply_fir_bandpass(audio, sr)
-        denoised = reduce_noise(filtered, sr)
-        cleaned = normalize_audio(denoised)
-
+        # You can keep your filtering here if you want for files
+        cleaned = normalize_audio(audio)
         st.subheader("🧼 Cleaned Audio")
         buf_out = BytesIO()
         sf.write(buf_out, cleaned, sr, format='wav')
@@ -111,21 +102,22 @@ elif input_method == "Record via Microphone (Browser)":
 
                     st.subheader("🎧 Original Mic Audio")
                     buffer_in = BytesIO()
-                    sf.write(buffer_in, raw_audio, sr, format='wav')
+                    # Save as float32 with sample rate 48000 - prevents pitch/speed change
+                    sf.write(buffer_in, raw_audio.astype(np.float32), sr, format='wav')
                     st.audio(buffer_in)
                     plot_waveform(raw_audio, sr, "Original Mic Waveform")
 
-                    # === Enhanced natural voice processing ===
-                    audio_norm = normalize_audio(raw_audio)          # Soft normalization
-                    audio_denoised = reduce_noise(audio_norm, sr)    # Mild noise reduction
-                    audio_amplified = amplify_audio(audio_denoised)  # Gentle amplification x2
-                    cleaned = normalize_audio(audio_amplified)       # Final normalization
-                    # ==============================================
+                    # Processed audio pipeline
+                    audio_norm = normalize_audio(raw_audio)
+                    audio_denoised = reduce_noise(audio_norm, sr)
+                    audio_amplified = amplify_audio(audio_denoised)
+                    cleaned = normalize_audio(audio_amplified)
 
                     st.subheader("🧼 Enhanced Mic Audio")
                     buffer_out = BytesIO()
-                    sf.write(buffer_out, cleaned, sr, format='wav')
+                    sf.write(buffer_out, cleaned.astype(np.float32), sr, format='wav')
                     st.audio(buffer_out)
                     plot_waveform(cleaned, sr, "Enhanced Mic Waveform")
+
             else:
                 st.warning("Recording has not started or no frames available.")
