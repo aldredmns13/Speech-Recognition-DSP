@@ -64,14 +64,42 @@ if input_mode == "Upload WAV File":
 
 # ----------------- Microphone Mode ------------------
 elif input_mode == "Use Microphone":
-    st.info("Allow mic access and speak. Audio will be filtered and denoised in real-time.")
+    st.info("Allow mic access and speak. Audio will be filtered and visualized in real time.")
+
+    # Store recent audio for plotting (rolling buffer)
+    if "live_audio_buffer" not in st.session_state:
+        st.session_state.live_audio_buffer = np.zeros(48000)  # 1-second buffer
+
+    # Live waveform plot placeholder
+    waveform_plot = st.empty()
 
     def audio_frame_callback(frame):
         audio = frame.to_ndarray(format="flt32").flatten()
+
+        # Apply processing
         filtered = apply_fir_bandpass(audio, sr=48000)
         denoised = reduce_noise(filtered, sr=48000)
         cleaned = normalize_audio(denoised)
+
+        # Save latest cleaned audio for playback
         st.session_state.mic_audio = cleaned
+
+        # Update rolling buffer for waveform display
+        buffer = st.session_state.live_audio_buffer
+        buffer = np.roll(buffer, -len(cleaned))
+        buffer[-len(cleaned):] = cleaned
+        st.session_state.live_audio_buffer = buffer
+
+        # Update real-time plot
+        fig, ax = plt.subplots()
+        t = np.linspace(0, len(buffer) / 48000, len(buffer))
+        ax.plot(t, buffer)
+        ax.set_title("Real-Time Mic Audio Waveform")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Amplitude")
+        waveform_plot.pyplot(fig)
+
+        # Return cleaned frame to stream
         new_frame = av.AudioFrame.from_ndarray(cleaned.astype(np.float32), format="flt32", layout="mono")
         new_frame.sample_rate = 48000
         return new_frame
@@ -83,16 +111,7 @@ elif input_mode == "Use Microphone":
     )
 
     if st.session_state.mic_audio is not None:
-        cleaned = st.session_state.mic_audio
-        sr = 48000
-
         st.subheader("Latest Cleaned Mic Audio")
-        plot_waveform(cleaned, sr, "Cleaned Mic Audio")
-
         buffer = BytesIO()
-        sf.write(buffer, cleaned, sr, format='wav')
+        sf.write(buffer, st.session_state.mic_audio, 48000, format='wav')
         st.audio(buffer)
-
-
-
-
