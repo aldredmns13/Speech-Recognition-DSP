@@ -4,4 +4,4 @@ numpy
 soundfile
 noisereduce
 sounddevice
-portaudio
+
