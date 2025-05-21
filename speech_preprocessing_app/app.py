@@ -5,7 +5,7 @@ import numpy as np
 import soundfile as sf
 import matplotlib.pyplot as plt
 from io import BytesIO
-from scipy.signal import firwin, lfilter, butter
+from scipy.signal import firwin, lfilter
 import noisereduce as nr
 
 # ------------------ DSP Functions ------------------
@@ -14,13 +14,8 @@ def apply_fir_bandpass(audio, sr, lowcut=300.0, highcut=3400.0, numtaps=101):
     fir_coeff = firwin(numtaps, [lowcut, highcut], pass_zero=False, fs=sr)
     return lfilter(fir_coeff, 1.0, audio)
 
-def highpass_filter(audio, sr, cutoff=100, order=5):
-    nyq = 0.5 * sr
-    normal_cutoff = cutoff / nyq
-    b, a = butter(order, normal_cutoff, btype='high', analog=False)
-    return lfilter(b, a, audio)
-
 def reduce_noise(audio, sr):
+    # Mild noise reduction to preserve natural voice
     return nr.reduce_noise(y=audio, sr=sr)
 
 def normalize_audio(audio):
@@ -28,6 +23,12 @@ def normalize_audio(audio):
     if max_val == 0:
         return audio
     return audio / max_val * 0.9
+
+def amplify_audio(audio, gain=2.0):
+    # Apply gain and clip to avoid distortion
+    audio_amp = audio * gain
+    audio_amp = np.clip(audio_amp, -1.0, 1.0)
+    return audio_amp
 
 def plot_waveform(audio, sr, title):
     fig, ax = plt.subplots()
@@ -40,7 +41,7 @@ def plot_waveform(audio, sr, title):
 
 # ------------------ UI ------------------
 
-st.title("🎤 Speech Preprocessing Module (Mic or File Input → Cleaned Audio)")
+st.title("🎤 Speech Preprocessing Module (Mic or File Input → Enhanced Audio)")
 
 # Session state setup
 if "start_recording" not in st.session_state:
@@ -114,17 +115,17 @@ elif input_method == "Record via Microphone (Browser)":
                     st.audio(buffer_in)
                     plot_waveform(raw_audio, sr, "Original Mic Waveform")
 
-                    # --- Improved Processing Pipeline ---
-                    audio_norm = normalize_audio(raw_audio)
-                    audio_hp = highpass_filter(audio_norm, sr, cutoff=100)
-                    audio_denoised = reduce_noise(audio_hp, sr)
-                    cleaned = normalize_audio(audio_denoised)
-                    # ------------------------------------
+                    # === Enhanced natural voice processing ===
+                    audio_norm = normalize_audio(raw_audio)          # Soft normalization
+                    audio_denoised = reduce_noise(audio_norm, sr)    # Mild noise reduction
+                    audio_amplified = amplify_audio(audio_denoised)  # Gentle amplification x2
+                    cleaned = normalize_audio(audio_amplified)       # Final normalization
+                    # ==============================================
 
-                    st.subheader("🧼 Cleaned Mic Audio")
+                    st.subheader("🧼 Enhanced Mic Audio")
                     buffer_out = BytesIO()
                     sf.write(buffer_out, cleaned, sr, format='wav')
                     st.audio(buffer_out)
-                    plot_waveform(cleaned, sr, "Cleaned Mic Waveform")
+                    plot_waveform(cleaned, sr, "Enhanced Mic Waveform")
             else:
                 st.warning("Recording has not started or no frames available.")
