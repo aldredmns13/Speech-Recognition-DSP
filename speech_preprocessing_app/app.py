@@ -1,14 +1,15 @@
 import streamlit as st
+from streamlit_webrtc import webrtc_streamer, AudioProcessorBase
+import av
 import numpy as np
-import matplotlib.pyplot as plt
 import soundfile as sf
-from scipy.signal import firwin, lfilter
-import sounddevice as sd
+import matplotlib.pyplot as plt
 from io import BytesIO
+from scipy.signal import firwin, lfilter
 import noisereduce as nr
-import time
 
-# ---------- Functions ----------
+# ------------------ DSP Functions ------------------
+
 def apply_fir_bandpass(audio, sr, lowcut=300.0, highcut=3400.0, numtaps=101):
     fir_coeff = firwin(numtaps, [lowcut, highcut], pass_zero=False, fs=sr)
     return lfilter(fir_coeff, 1.0, audio)
@@ -28,61 +29,78 @@ def plot_waveform(audio, sr, title):
     ax.set_ylabel("Amplitude")
     st.pyplot(fig)
 
-# ---------- Streamlit App ----------
-st.title("🎤 Real-Time Mic Recording with Audio Filtering")
+# ------------------ Streamlit UI ------------------
 
-sr = 44100
-duration = 10  # seconds
+st.title("🎤 Speech Preprocessing (Mic/File ➜ Filtered Output)")
 
-if st.button("🎙️ Start Recording (10 seconds)"):
-    st.info("Recording... Please speak clearly.")
-    
-    audio_buffer = np.zeros((int(duration * sr),))
-    chunk_size = 1024
-    total_chunks = int(duration * sr / chunk_size)
-    stream_plot = st.empty()
+# Session state to hold mic data
+if "recorded_audio" not in st.session_state:
+    st.session_state.recorded_audio = []
 
-    def callback(indata, frames, time_info, status):
-        callback.audio_data.extend(indata[:, 0].tolist())  # Flatten mono
-    callback.audio_data = []
+# Mic Audio Processor
+class AudioProcessor(AudioProcessorBase):
+    def __init__(self) -> None:
+        self.frames = []
 
-    with sd.InputStream(callback=callback, channels=1, samplerate=sr, blocksize=chunk_size):
-        for _ in range(total_chunks):
-            if len(callback.audio_data) > chunk_size:
-                # Display live waveform every chunk
-                data_chunk = np.array(callback.audio_data[-sr:])  # last 1 sec
-                fig, ax = plt.subplots()
-                t = np.linspace(0, len(data_chunk) / sr, len(data_chunk))
-                ax.plot(t, data_chunk)
-                ax.set_title("🔴 Live Input Waveform")
-                ax.set_xlabel("Time (s)")
-                ax.set_ylabel("Amplitude")
-                stream_plot.pyplot(fig)
-            time.sleep(chunk_size / sr)
+    def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
+        audio = frame.to_ndarray().flatten()
+        self.frames.append(audio)
+        return frame
 
-    st.success("✅ Recording complete!")
+# Input Options
+input_method = st.radio("Select input method:", ["Upload WAV file", "Record from Microphone (Browser)"])
 
-    audio = np.array(callback.audio_data)
-    if len(audio) < duration * sr:
-        # Zero-pad if too short
-        audio = np.pad(audio, (0, int(duration * sr) - len(audio)))
+sr = 48000
 
-    # Display input
-    st.subheader("🎧 Raw Input Audio")
-    buffer_in = BytesIO()
-    sf.write(buffer_in, audio, sr, format='wav')
-    st.audio(buffer_in)
-    plot_waveform(audio, sr, "Input Audio Waveform")
+if input_method == "Upload WAV file":
+    uploaded = st.file_uploader("Upload .wav file", type=["wav"])
+    if uploaded is not None:
+        audio, sr = sf.read(uploaded)
+        if audio.ndim > 1:
+            audio = audio[:, 0]
 
-    # Processing
-    filtered = apply_fir_bandpass(audio, sr)
-    denoised = reduce_noise(filtered, sr)
-    cleaned = normalize_audio(denoised)
+        st.subheader("🎧 Input Audio")
+        st.audio(uploaded)
+        plot_waveform(audio, sr, "Input Waveform")
 
-    # Display output
-    st.subheader("🧼 Cleaned Audio Output")
-    buffer_out = BytesIO()
-    sf.write(buffer_out, cleaned, sr, format='wav')
-    st.audio(buffer_out)
-    plot_waveform(cleaned, sr, "Output Audio Waveform")
+        # Process
+        filtered = apply_fir_bandpass(audio, sr)
+        denoised = reduce_noise(filtered, sr)
+        cleaned = normalize_audio(denoised)
+
+        st.subheader("🧼 Cleaned Output")
+        buf_out = BytesIO()
+        sf.write(buf_out, cleaned, sr, format='wav')
+        st.audio(buf_out)
+        plot_waveform(cleaned, sr, "Output Waveform")
+
+elif input_method == "Record from Microphone (Browser)":
+    st.subheader("🎙️ Step 1: Record Mic Input")
+    webrtc_ctx = webrtc_streamer(
+        key="mic",
+        audio_processor_factory=AudioProcessor,
+        media_stream_constraints={"audio": True, "video": False},
+        async_processing=True,
+    )
+
+    if st.button("🔁 Process Last 10 Seconds"):
+        if webrtc_ctx.audio_processor:
+            # Combine recent frames
+            audio = np.concatenate(webrtc_ctx.audio_processor.frames)[-sr * 10:]
+            st.audio(sf.write(BytesIO(), audio, sr, format='wav').getvalue())
+            plot_waveform(audio, sr, "Input Mic Waveform")
+
+            # Filter
+            filtered = apply_fir_bandpass(audio, sr)
+            denoised = reduce_noise(filtered, sr)
+            cleaned = normalize_audio(denoised)
+
+            st.subheader("🧼 Cleaned Output")
+            buffer = BytesIO()
+            sf.write(buffer, cleaned, sr, format='wav')
+            st.audio(buffer)
+            plot_waveform(cleaned, sr, "Output Mic Output")
+        else:
+            st.warning("⚠️ Please record audio first before clicking process.")
+
 
