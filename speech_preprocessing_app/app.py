@@ -1,52 +1,56 @@
 import streamlit as st
 import numpy as np
 import soundfile as sf
-import noisereduce as nr
-import os
-import tempfile
+import sounddevice as sd
+import noisereduce as nr  # pip install noisereduce
+import matplotlib.pyplot as plt
+from io import BytesIO
 
-try:
-    import matlab.engine
-    has_matlab = True
-except ImportError:
-    has_matlab = False
+st.title("Speech Preprocessing Web App with Noise Reduction and Mic Input")
 
-st.set_page_config(page_title="Speech Recognition Preprocessing", layout="centered")
+# Option to use mic or upload
+input_option = st.radio("Select input source:", ["Upload audio file", "Record from microphone"])
 
-def save_audio_file(file_path, data, samplerate):
-    sf.write(file_path, data, samplerate)
+def plot_waveform(audio, sr, title="Waveform"):
+    fig, ax = plt.subplots()
+    time = np.linspace(0, len(audio) / sr, num=len(audio))
+    ax.plot(time, audio)
+    ax.set_title(title)
+    ax.set_xlabel("Time (seconds)")
+    ax.set_ylabel("Amplitude")
+    st.pyplot(fig)
 
-def denoise_audio(data, fs):
-    reduced_noise = nr.reduce_noise(y=data.flatten(), sr=fs)
-    return reduced_noise
+if input_option == "Upload audio file":
+    uploaded_file = st.file_uploader("Upload audio (wav format)", type=["wav"])
+    if uploaded_file is not None:
+        audio, sr = sf.read(uploaded_file)
+        st.audio(uploaded_file)
+        
+        plot_waveform(audio, sr, "Original Audio")
 
-def run_matlab_plot(original_path, filtered_path):
-    eng = matlab.engine.start_matlab()
-    fig_path = eng.plot_audio_waves(original_path, filtered_path, nargout=1)
-    eng.quit()
-    return fig_path
+        # Apply noise reduction using noisereduce
+        reduced_noise = nr.reduce_noise(y=audio, sr=sr)
 
-st.title("🎙️ Speech Recognition Preprocessing Module")
-st.markdown("Upload a `.wav` file, denoise it, and visualize the waveform using MATLAB.")
+        st.audio(BytesIO(sf.write(BytesIO(), reduced_noise, sr, format='wav').getbuffer()))
 
-uploaded_file = st.file_uploader("📁 Upload .wav Audio File", type=["wav"])
+        plot_waveform(reduced_noise, sr, "Noise Reduced Audio")
 
-if uploaded_file:
-    audio_data, fs = sf.read(uploaded_file)
-    original_path = os.path.join(tempfile.gettempdir(), "original_file.wav")
-    save_audio_file(original_path, audio_data, fs)
+elif input_option == "Record from microphone":
+    duration = st.slider("Recording duration (seconds)", 1, 10, 3)
+    if st.button("Record"):
+        st.info("Recording...")
+        audio = sd.rec(int(duration * 44100), samplerate=44100, channels=1)
+        sd.wait()
+        audio = audio.flatten()
 
-    denoised_audio = denoise_audio(audio_data, fs)
-    filtered_path = os.path.join(tempfile.gettempdir(), "filtered_file.wav")
-    save_audio_file(filtered_path, denoised_audio, fs)
+        plot_waveform(audio, 44100, "Original Mic Recording")
 
-    st.success("Audio successfully filtered!")
+        reduced_noise = nr.reduce_noise(y=audio, sr=44100)
 
-    st.audio(original_path, format="audio/wav", start_time=0)
-    st.audio(filtered_path, format="audio/wav", start_time=0)
+        plot_waveform(reduced_noise, 44100, "Noise Reduced Mic Audio")
 
-    if has_matlab and st.button("📊 Show MATLAB Sine Waves"):
-        fig_path = run_matlab_plot(original_path, filtered_path)
-        st.image(fig_path, caption="Original vs Filtered (MATLAB)")
-    elif not has_matlab:
-        st.warning("MATLAB not available. Plotting is disabled.")
+        # Save to buffer and play
+        buffer = BytesIO()
+        sf.write(buffer, reduced_noise, 44100, format='wav')
+        st.audio(buffer)
+
