@@ -3,14 +3,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 import soundfile as sf
 from scipy.signal import firwin, lfilter
+import sounddevice as sd
 from io import BytesIO
 import noisereduce as nr
-import sounddevice as sd
+import time
 
-st.title("Speech Preprocessing App (Mic/File ➜ Filtered Output)")
-
-# ------------------ Audio Processing Functions ------------------
-
+# ---------- Functions ----------
 def apply_fir_bandpass(audio, sr, lowcut=300.0, highcut=3400.0, numtaps=101):
     fir_coeff = firwin(numtaps, [lowcut, highcut], pass_zero=False, fs=sr)
     return lfilter(fir_coeff, 1.0, audio)
@@ -30,58 +28,61 @@ def plot_waveform(audio, sr, title):
     ax.set_ylabel("Amplitude")
     st.pyplot(fig)
 
-# ------------------ UI: Input Options ------------------
+# ---------- Streamlit App ----------
+st.title("🎤 Real-Time Mic Recording with Audio Filtering")
 
-input_method = st.radio("Select input method:", ["Upload WAV file", "Record from Microphone"])
+sr = 44100
+duration = 10  # seconds
 
-sr = 44100  # Sample rate
-
-if input_method == "Upload WAV file":
-    uploaded_file = st.file_uploader("Upload a WAV file", type=["wav"])
+if st.button("🎙️ Start Recording (10 seconds)"):
+    st.info("Recording... Please speak clearly.")
     
-    if uploaded_file is not None:
-        audio, sr = sf.read(uploaded_file)
-        if audio.ndim > 1:
-            audio = audio[:, 0]  # Convert to mono
+    audio_buffer = np.zeros((int(duration * sr),))
+    chunk_size = 1024
+    total_chunks = int(duration * sr / chunk_size)
+    stream_plot = st.empty()
 
-        st.subheader("🎧 Original Audio (Input)")
-        st.audio(uploaded_file)
-        plot_waveform(audio, sr, "Input Waveform")
+    def callback(indata, frames, time_info, status):
+        callback.audio_data.extend(indata[:, 0].tolist())  # Flatten mono
+    callback.audio_data = []
 
-        # Process
-        filtered = apply_fir_bandpass(audio, sr)
-        denoised = reduce_noise(filtered, sr)
-        cleaned = normalize_audio(denoised)
+    with sd.InputStream(callback=callback, channels=1, samplerate=sr, blocksize=chunk_size):
+        for _ in range(total_chunks):
+            if len(callback.audio_data) > chunk_size:
+                # Display live waveform every chunk
+                data_chunk = np.array(callback.audio_data[-sr:])  # last 1 sec
+                fig, ax = plt.subplots()
+                t = np.linspace(0, len(data_chunk) / sr, len(data_chunk))
+                ax.plot(t, data_chunk)
+                ax.set_title("🔴 Live Input Waveform")
+                ax.set_xlabel("Time (s)")
+                ax.set_ylabel("Amplitude")
+                stream_plot.pyplot(fig)
+            time.sleep(chunk_size / sr)
 
-        st.subheader("🧼 Cleaned Audio (Output)")
-        cleaned_buffer = BytesIO()
-        sf.write(cleaned_buffer, cleaned, sr, format='wav')
-        st.audio(cleaned_buffer)
-        plot_waveform(cleaned, sr, "Output Waveform")
+    st.success("✅ Recording complete!")
 
-elif input_method == "Record from Microphone":
-    duration = 10  # seconds
-    if st.button("🎙️ Record 10 Seconds"):
-        st.info("Recording... Speak clearly into your mic.")
-        recording = sd.rec(int(duration * sr), samplerate=sr, channels=1)
-        sd.wait()
-        audio = recording.flatten()
+    audio = np.array(callback.audio_data)
+    if len(audio) < duration * sr:
+        # Zero-pad if too short
+        audio = np.pad(audio, (0, int(duration * sr) - len(audio)))
 
-        st.success("Recording complete!")
+    # Display input
+    st.subheader("🎧 Raw Input Audio")
+    buffer_in = BytesIO()
+    sf.write(buffer_in, audio, sr, format='wav')
+    st.audio(buffer_in)
+    plot_waveform(audio, sr, "Input Audio Waveform")
 
-        st.subheader("🎧 Original Mic Recording (Input)")
-        buffer = BytesIO()
-        sf.write(buffer, audio, sr, format='wav')
-        st.audio(buffer)
-        plot_waveform(audio, sr, "Input Mic Waveform")
+    # Processing
+    filtered = apply_fir_bandpass(audio, sr)
+    denoised = reduce_noise(filtered, sr)
+    cleaned = normalize_audio(denoised)
 
-        # Process
-        filtered = apply_fir_bandpass(audio, sr)
-        denoised = reduce_noise(filtered, sr)
-        cleaned = normalize_audio(denoised)
+    # Display output
+    st.subheader("🧼 Cleaned Audio Output")
+    buffer_out = BytesIO()
+    sf.write(buffer_out, cleaned, sr, format='wav')
+    st.audio(buffer_out)
+    plot_waveform(cleaned, sr, "Output Audio Waveform")
 
-        st.subheader("🧼 Cleaned Mic Audio (Output)")
-        out_buffer = BytesIO()
-        sf.write(out_buffer, cleaned, sr, format='wav')
-        st.audio(out_buffer)
-        plot_waveform(cleaned, sr, "Output Mic Waveform")
