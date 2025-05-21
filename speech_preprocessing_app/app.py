@@ -31,7 +31,7 @@ def plot_waveform(audio, sr, title):
 
 # ------------------ UI ------------------
 
-st.title("🎤 Speech Preprocessing (Mic or File Input → Cleaned Audio)")
+st.title("🎤 Speech Preprocessing Module (Mic or File Input → Cleaned Audio)")
 
 # Session state setup
 if "start_recording" not in st.session_state:
