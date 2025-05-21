@@ -1,118 +1,68 @@
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, AudioProcessorBase
-import av
+import sounddevice as sd
 import numpy as np
-import soundfile as sf
+from scipy.signal import butter, lfilter
 import matplotlib.pyplot as plt
-from io import BytesIO
-from scipy.signal import firwin, lfilter
 import noisereduce as nr
 
-# ------------------ DSP Functions ------------------
-
-def apply_fir_bandpass(audio, sr, lowcut=300.0, highcut=3400.0, numtaps=101):
-    fir_coeff = firwin(numtaps, [lowcut, highcut], pass_zero=False, fs=sr)
-    return lfilter(fir_coeff, 1.0, audio)
-
-def reduce_noise(audio, sr):
-    return nr.reduce_noise(y=audio, sr=sr)
+# Sampling parameters
+SAMPLE_RATE = 16000  # 16 kHz sample rate
+DURATION = 5  # seconds to record
 
 def normalize_audio(audio):
-    return audio / np.max(np.abs(audio)) * 0.9
+    peak = np.max(np.abs(audio))
+    if peak == 0:
+        return audio
+    return audio / peak
+
+def highpass_filter(audio, sr, cutoff=100, order=5):
+    nyq = 0.5 * sr
+    normal_cutoff = cutoff / nyq
+    b, a = butter(order, normal_cutoff, btype='high', analog=False)
+    filtered_audio = lfilter(b, a, audio)
+    return filtered_audio
 
 def plot_waveform(audio, sr, title):
-    fig, ax = plt.subplots()
-    t = np.linspace(0, len(audio) / sr, len(audio))
-    ax.plot(t, audio)
-    ax.set_title(title)
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Amplitude")
-    st.pyplot(fig)
+    times = np.arange(len(audio)) / sr
+    plt.figure(figsize=(10, 3))
+    plt.plot(times, audio)
+    plt.title(title)
+    plt.ylabel('Amplitude')
+    plt.xlabel('Time (s)')
+    plt.xlim(0, len(audio) / sr)
+    plt.tight_layout()
+    st.pyplot(plt)
+    plt.clf()
 
-# ------------------ UI ------------------
+st.title("Speech Preprocessing Module")
 
-st.title("🎤 Speech Preprocessing Module (Mic or File Input → Cleaned Audio)")
+if st.button("Record Audio from Mic (5 seconds)"):
+    st.info("Recording...")
+    audio = sd.rec(int(DURATION * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1)
+    sd.wait()  # Wait until recording is finished
+    audio = audio.flatten()
+    st.success("Recording complete!")
 
-# Session state setup
-if "start_recording" not in st.session_state:
-    st.session_state.start_recording = False
+    # Show raw audio waveform
+    plot_waveform(audio, SAMPLE_RATE, "Raw Audio")
 
-# Mic Audio Processor
-class AudioProcessor(AudioProcessorBase):
-    def __init__(self):
-        self.frames = []
+    # Normalize
+    audio_norm = normalize_audio(audio)
 
-    def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
-        audio = frame.to_ndarray().flatten()
-        self.frames.append(audio)
-        return frame
+    # High-pass filter to remove low-frequency rumble
+    audio_hp = highpass_filter(audio_norm, SAMPLE_RATE, cutoff=100)
 
-# Choose input method
-input_method = st.radio("Select Input Source", ["Upload .wav File", "Record via Microphone (Browser)"])
+    # Noise reduction (optional, comment if you want)
+    audio_clean = nr.reduce_noise(y=audio_hp, sr=SAMPLE_RATE)
 
-sr = 48000
+    # Normalize again after noise reduction
+    audio_clean = normalize_audio(audio_clean)
 
-if input_method == "Upload .wav File":
-    uploaded = st.file_uploader("Upload a WAV file", type=["wav"])
-    if uploaded:
-        audio, sr = sf.read(uploaded)
-        if audio.ndim > 1:
-            audio = audio[:, 0]
+    # Show processed audio waveform
+    plot_waveform(audio_clean, SAMPLE_RATE, "Processed Audio")
 
-        st.subheader("🎧 Original Audio")
-        st.audio(uploaded)
-        plot_waveform(audio, sr, "Original Audio Waveform")
+    st.audio(audio_clean, format="audio/wav", sample_rate=SAMPLE_RATE)
 
-        filtered = apply_fir_bandpass(audio, sr)
-        denoised = reduce_noise(filtered, sr)
-        cleaned = normalize_audio(denoised)
-
-        st.subheader("🧼 Cleaned Audio")
-        buf_out = BytesIO()
-        sf.write(buf_out, cleaned, sr, format='wav')
-        st.audio(buf_out)
-        plot_waveform(cleaned, sr, "Cleaned Audio Waveform")
-
-elif input_method == "Record via Microphone (Browser)":
-    st.subheader("🎙️ Step 1: Start Recording")
-
-    if not st.session_state.start_recording:
-        if st.button("🎙️ Start Mic"):
-            st.session_state.start_recording = True
-            st.experimental_rerun()
-
-    if st.session_state.start_recording:
-        webrtc_ctx = webrtc_streamer(
-            key="mic",
-            audio_processor_factory=AudioProcessor,
-            media_stream_constraints={"audio": True, "video": False},
-            async_processing=True,
-        )
-
-        st.info("Recording from browser mic... speak clearly for at least 10 seconds.")
-
-        if st.button("✅ Process Last 10 Seconds"):
-            if webrtc_ctx and webrtc_ctx.audio_processor:
-                raw_audio = np.concatenate(webrtc_ctx.audio_processor.frames)
-                if len(raw_audio) < sr * 10:
-                    st.warning("You need at least 10 seconds of speech.")
-                else:
-                    raw_audio = raw_audio[-sr * 10:]
-
-                    st.subheader("🎧 Original Mic Audio")
-                    buffer_in = BytesIO()
-                    sf.write(buffer_in, raw_audio, sr, format='wav')
-                    st.audio(buffer_in)
-                    plot_waveform(raw_audio, sr, "Original Mic Waveform")
-
-                    filtered = apply_fir_bandpass(raw_audio, sr)
-                    denoised = reduce_noise(filtered, sr)
-                    cleaned = normalize_audio(denoised)
-
-                    st.subheader("🧼 Cleaned Mic Audio")
-                    buffer_out = BytesIO()
-                    sf.write(buffer_out, cleaned, sr, format='wav')
-                    st.audio(buffer_out)
-                    plot_waveform(cleaned, sr, "Cleaned Mic Waveform")
-            else:
-                st.warning("Recording has not started or no frames available.")
+    # Optionally save the processed audio to a file for MATLAB use
+    # from scipy.io.wavfile import write
+    # write("processed_audio.wav", SAMPLE_RATE, (audio_clean * 32767).astype(np.int16))
