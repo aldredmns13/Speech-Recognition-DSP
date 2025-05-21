@@ -26,3 +26,7 @@ streamlit run app.py
 - Record from Mic or Upload WAV files
 - Noise reduction using Python
 - Sine wave visualization using MATLAB
+
+pip install streamlit-webrtc av noisereduce numpy matplotlib
+pip install streamlit-webrtc
+
