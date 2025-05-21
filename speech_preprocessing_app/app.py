@@ -63,55 +63,54 @@ if input_mode == "Upload WAV File":
         st.audio(cleaned_buffer)
 
 # ----------------- Microphone Mode ------------------
-elif input_mode == "Use Microphone":
-    st.info("Allow mic access and speak. Audio will be filtered and visualized in real time.")
+def audio_frame_callback(frame):
+    audio = frame.to_ndarray(format="flt32").flatten()
 
-    # Store recent audio for plotting (rolling buffer)
-    if "live_audio_buffer" not in st.session_state:
-        st.session_state.live_audio_buffer = np.zeros(48000)  # 1-second buffer
+    # FIR filtering + noise reduction + normalization
+    filtered = apply_fir_bandpass(audio, sr=48000)
+    denoised = reduce_noise(filtered, sr=48000)
+    cleaned = normalize_audio(denoised)
 
-    # Live waveform plot placeholder
-    waveform_plot = st.empty()
+    # Save cleaned audio for playback
+    st.session_state.mic_audio = cleaned
 
-    def audio_frame_callback(frame):
-        audio = frame.to_ndarray(format="flt32").flatten()
+    # Append to live waveform buffer
+    buffer = st.session_state.live_audio_buffer
+    buffer = np.roll(buffer, -len(cleaned))
+    buffer[-len(cleaned):] = cleaned
+    st.session_state.live_audio_buffer = buffer
 
-        # Apply processing
-        filtered = apply_fir_bandpass(audio, sr=48000)
-        denoised = reduce_noise(filtered, sr=48000)
-        cleaned = normalize_audio(denoised)
+    # Return cleaned audio frame
+    new_frame = av.AudioFrame.from_ndarray(cleaned.astype(np.float32), format="flt32", layout="mono")
+    new_frame.sample_rate = 48000
+    return new_frame
+import time
 
-        # Save latest cleaned audio for playback
-        st.session_state.mic_audio = cleaned
+# Initialize the rolling buffer once
+if "live_audio_buffer" not in st.session_state:
+    st.session_state.live_audio_buffer = np.zeros(48000)
 
-        # Update rolling buffer for waveform display
-        buffer = st.session_state.live_audio_buffer
-        buffer = np.roll(buffer, -len(cleaned))
-        buffer[-len(cleaned):] = cleaned
-        st.session_state.live_audio_buffer = buffer
+# Display mic stream
+webrtc_streamer(
+    key="mic",
+    audio_frame_callback=audio_frame_callback,
+    media_stream_constraints={"audio": True, "video": False}
+)
 
-        # Update real-time plot
-        fig, ax = plt.subplots()
-        t = np.linspace(0, len(buffer) / 48000, len(buffer))
-        ax.plot(t, buffer)
-        ax.set_title("Real-Time Mic Audio Waveform")
-        ax.set_xlabel("Time (s)")
-        ax.set_ylabel("Amplitude")
-        waveform_plot.pyplot(fig)
+# Real-time waveform plotting outside the callback
+st.subheader("Real-Time Mic Audio Waveform")
+plot_area = st.empty()
 
-        # Return cleaned frame to stream
-        new_frame = av.AudioFrame.from_ndarray(cleaned.astype(np.float32), format="flt32", layout="mono")
-        new_frame.sample_rate = 48000
-        return new_frame
-
-    webrtc_streamer(
-        key="mic",
-        audio_frame_callback=audio_frame_callback,
-        media_stream_constraints={"audio": True, "video": False}
-    )
-
-    if st.session_state.mic_audio is not None:
-        st.subheader("Latest Cleaned Mic Audio")
-        buffer = BytesIO()
-        sf.write(buffer, st.session_state.mic_audio, 48000, format='wav')
-        st.audio(buffer)
+# Continuously update the plot for a few seconds
+plot_duration = 20  # seconds
+start_time = time.time()
+while time.time() - start_time < plot_duration:
+    buffer = st.session_state.live_audio_buffer
+    fig, ax = plt.subplots()
+    t = np.linspace(0, len(buffer) / 48000, len(buffer))
+    ax.plot(t, buffer)
+    ax.set_title("Real-Time Mic Audio")
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Amplitude")
+    plot_area.pyplot(fig)
+    time.sleep(0.2)
