@@ -2,15 +2,14 @@ import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 import soundfile as sf
-from io import BytesIO
-from streamlit_webrtc import webrtc_streamer
-import av
-import noisereduce as nr
 from scipy.signal import firwin, lfilter
+from io import BytesIO
+import noisereduce as nr
+import sounddevice as sd
 
-st.title("Speech Preprocessing App with FIR Filtering")
+st.title("Speech Preprocessing App (Mic/File ➜ Filtered Output)")
 
-# ----------------- Signal Processing Functions ------------------
+# ------------------ Audio Processing Functions ------------------
 
 def apply_fir_bandpass(audio, sr, lowcut=300.0, highcut=3400.0, numtaps=101):
     fir_coeff = firwin(numtaps, [lowcut, highcut], pass_zero=False, fs=sr)
@@ -24,93 +23,65 @@ def normalize_audio(audio):
 
 def plot_waveform(audio, sr, title):
     fig, ax = plt.subplots()
-    time = np.linspace(0, len(audio) / sr, num=len(audio))
-    ax.plot(time, audio)
+    t = np.linspace(0, len(audio) / sr, len(audio))
+    ax.plot(t, audio)
     ax.set_title(title)
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Amplitude")
     st.pyplot(fig)
 
-# ----------------- App UI ------------------
+# ------------------ UI: Input Options ------------------
 
-# To store last mic input
-if "mic_audio" not in st.session_state:
-    st.session_state.mic_audio = None
+input_method = st.radio("Select input method:", ["Upload WAV file", "Record from Microphone"])
 
-input_mode = st.radio("Select Input Mode", ["Upload WAV File", "Use Microphone"])
+sr = 44100  # Sample rate
 
-# ----------------- File Upload Mode ------------------
-if input_mode == "Upload WAV File":
+if input_method == "Upload WAV file":
     uploaded_file = st.file_uploader("Upload a WAV file", type=["wav"])
+    
     if uploaded_file is not None:
         audio, sr = sf.read(uploaded_file)
         if audio.ndim > 1:
-            audio = audio[:, 0]  # Convert stereo to mono
+            audio = audio[:, 0]  # Convert to mono
 
-        st.subheader("Original Audio")
+        st.subheader("🎧 Original Audio (Input)")
         st.audio(uploaded_file)
-        plot_waveform(audio, sr, "Original Audio")
+        plot_waveform(audio, sr, "Input Waveform")
 
-        st.subheader("Filtered + Denoised + Normalized Audio")
-
+        # Process
         filtered = apply_fir_bandpass(audio, sr)
         denoised = reduce_noise(filtered, sr)
         cleaned = normalize_audio(denoised)
 
-        plot_waveform(cleaned, sr, "Cleaned Audio")
+        st.subheader("🧼 Cleaned Audio (Output)")
         cleaned_buffer = BytesIO()
         sf.write(cleaned_buffer, cleaned, sr, format='wav')
         st.audio(cleaned_buffer)
+        plot_waveform(cleaned, sr, "Output Waveform")
 
-# ----------------- Microphone Mode ------------------
-def audio_frame_callback(frame):
-    audio = frame.to_ndarray(format="flt32").flatten()
+elif input_method == "Record from Microphone":
+    duration = 10  # seconds
+    if st.button("🎙️ Record 10 Seconds"):
+        st.info("Recording... Speak clearly into your mic.")
+        recording = sd.rec(int(duration * sr), samplerate=sr, channels=1)
+        sd.wait()
+        audio = recording.flatten()
 
-    # FIR filtering + noise reduction + normalization
-    filtered = apply_fir_bandpass(audio, sr=48000)
-    denoised = reduce_noise(filtered, sr=48000)
-    cleaned = normalize_audio(denoised)
+        st.success("Recording complete!")
 
-    # Save cleaned audio for playback
-    st.session_state.mic_audio = cleaned
+        st.subheader("🎧 Original Mic Recording (Input)")
+        buffer = BytesIO()
+        sf.write(buffer, audio, sr, format='wav')
+        st.audio(buffer)
+        plot_waveform(audio, sr, "Input Mic Waveform")
 
-    # Append to live waveform buffer
-    buffer = st.session_state.live_audio_buffer
-    buffer = np.roll(buffer, -len(cleaned))
-    buffer[-len(cleaned):] = cleaned
-    st.session_state.live_audio_buffer = buffer
+        # Process
+        filtered = apply_fir_bandpass(audio, sr)
+        denoised = reduce_noise(filtered, sr)
+        cleaned = normalize_audio(denoised)
 
-    # Return cleaned audio frame
-    new_frame = av.AudioFrame.from_ndarray(cleaned.astype(np.float32), format="flt32", layout="mono")
-    new_frame.sample_rate = 48000
-    return new_frame
-import time
-
-# Initialize the rolling buffer once
-if "live_audio_buffer" not in st.session_state:
-    st.session_state.live_audio_buffer = np.zeros(48000)
-
-# Display mic stream
-webrtc_streamer(
-    key="mic",
-    audio_frame_callback=audio_frame_callback,
-    media_stream_constraints={"audio": True, "video": False}
-)
-
-# Real-time waveform plotting outside the callback
-st.subheader("Real-Time Mic Audio Waveform")
-plot_area = st.empty()
-
-# Continuously update the plot for a few seconds
-plot_duration = 20  # seconds
-start_time = time.time()
-while time.time() - start_time < plot_duration:
-    buffer = st.session_state.live_audio_buffer
-    fig, ax = plt.subplots()
-    t = np.linspace(0, len(buffer) / 48000, len(buffer))
-    ax.plot(t, buffer)
-    ax.set_title("Real-Time Mic Audio")
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Amplitude")
-    plot_area.pyplot(fig)
-    time.sleep(0.2)
+        st.subheader("🧼 Cleaned Mic Audio (Output)")
+        out_buffer = BytesIO()
+        sf.write(out_buffer, cleaned, sr, format='wav')
+        st.audio(out_buffer)
+        plot_waveform(cleaned, sr, "Output Mic Waveform")
