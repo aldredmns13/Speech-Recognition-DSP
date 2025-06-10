@@ -5,8 +5,20 @@ import numpy as np
 import soundfile as sf
 from io import BytesIO
 import matplotlib.pyplot as plt
+import noisereduce as nr
 
-# ---------- Basic Helpers ----------
+# ---------- DSP Helpers ----------
+
+def reduce_noise(audio, sr):
+    return nr.reduce_noise(y=audio, sr=sr)
+
+def normalize_audio(audio):
+    max_val = np.max(np.abs(audio))
+    return audio if max_val == 0 else audio / max_val * 0.9
+
+def amplify_audio(audio, gain=1.5):
+    audio_amp = audio * gain
+    return np.clip(audio_amp, -1.0, 1.0)
 
 def plot_waveform(audio, sr, title):
     fig, ax = plt.subplots()
@@ -19,27 +31,25 @@ def plot_waveform(audio, sr, title):
 
 # ---------- UI ----------
 
-st.title("🎙️ Simple Voice Recorder (Mic Only)")
+st.title("🎤 Voice Recorder & Enhancer (Mic Input)")
 
-# Maintain state
 if "start_recording" not in st.session_state:
     st.session_state.start_recording = False
 
-# Audio processor (no processing, just collect audio)
 class AudioProcessor(AudioProcessorBase):
     def __init__(self):
         self.frames = []
 
     def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
         audio = frame.to_ndarray().flatten()
-        # Convert from int16 to float32 in [-1.0, 1.0] range
+        # Convert to float32 from int16 or int
         if audio.dtype != np.float32:
             audio = audio.astype(np.float32) / 32768.0
         self.frames.append(audio)
         return frame
 
-# Start mic
-st.subheader("🎤 Record from Microphone")
+# Mic recording UI
+st.subheader("🎙️ Step 1: Record Your Voice")
 
 if not st.session_state.start_recording:
     if st.button("🎙️ Start Mic"):
@@ -54,25 +64,38 @@ if st.session_state.start_recording:
         async_processing=True,
     )
 
-    st.info("Recording from your mic... speak clearly for about 10 seconds.")
+    st.info("Recording from mic... speak clearly for at least 10 seconds.")
 
-    if st.button("✅ Save Last 10 Seconds"):
+    if st.button("✅ Process Last 10 Seconds"):
         if webrtc_ctx and webrtc_ctx.audio_processor:
-            sr = 48000  # Make sure this matches WebRTC audio
+            sr = 48000
             raw_audio = np.concatenate(webrtc_ctx.audio_processor.frames)
 
             if len(raw_audio) < sr * 2:
-                st.warning("You need at least a few seconds of recording.")
+                st.warning("You need at least a few seconds of audio.")
             else:
-                raw_audio = raw_audio[-sr * 10:]  # Last 10 seconds
+                raw_audio = raw_audio[-sr * 10:]
 
-                st.subheader("🔊 Playback")
-                buffer = BytesIO()
-                sf.write(buffer, raw_audio.astype(np.float32), sr, format='wav')
-                st.audio(buffer)
+                # ----- Original Audio -----
+                st.subheader("🔊 Original Mic Audio")
+                buf_orig = BytesIO()
+                sf.write(buf_orig, raw_audio, sr, format='wav')
+                st.audio(buf_orig)
+                plot_waveform(raw_audio, sr, "Original Mic Waveform")
 
-                plot_waveform(raw_audio, sr, "Mic Recording Waveform")
+                # ----- Enhanced Audio -----
+                st.subheader("🧼 Enhanced Mic Audio (Clearer)")
+                cleaned = raw_audio
+                cleaned = normalize_audio(cleaned)
+                cleaned = reduce_noise(cleaned, sr)
+                cleaned = amplify_audio(cleaned)
+                cleaned = normalize_audio(cleaned)
+
+                buf_clean = BytesIO()
+                sf.write(buf_clean, cleaned.astype(np.float32), sr, format='wav')
+                st.audio(buf_clean)
+                plot_waveform(cleaned, sr, "Enhanced Mic Waveform")
 
         else:
-            st.warning("Recording not started or no audio captured.")
+            st.warning("Recording not started or no audio collected.")
 
