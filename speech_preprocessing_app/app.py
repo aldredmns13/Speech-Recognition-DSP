@@ -6,8 +6,9 @@ import soundfile as sf
 from io import BytesIO
 import matplotlib.pyplot as plt
 import noisereduce as nr
+from scipy.signal import resample
 
-# ---------- DSP Helpers ----------
+# ---------- Helpers ----------
 
 def reduce_noise(audio, sr):
     return nr.reduce_noise(y=audio, sr=sr)
@@ -31,25 +32,21 @@ def plot_waveform(audio, sr, title):
 
 # ---------- UI ----------
 
-st.title("🎤 Voice Recorder & Enhancer (Mic Input)")
+st.title("🎤 Mic Voice Recorder & Enhancer (No Reverb, Normal Voice)")
 
 if "start_recording" not in st.session_state:
     st.session_state.start_recording = False
 
 class AudioProcessor(AudioProcessorBase):
     def __init__(self):
-        self.frames = []
+        self.buffer = []
 
     def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
-        audio = frame.to_ndarray().flatten()
-        # Convert to float32 from int16 or int
-        if audio.dtype != np.float32:
-            audio = audio.astype(np.float32) / 32768.0
-        self.frames.append(audio)
+        audio = frame.to_ndarray().flatten().astype(np.float32) / 32768.0
+        self.buffer.append(audio)
         return frame
 
-# Mic recording UI
-st.subheader("🎙️ Step 1: Record Your Voice")
+st.subheader("🎙️ Step 1: Record from Microphone")
 
 if not st.session_state.start_recording:
     if st.button("🎙️ Start Mic"):
@@ -64,38 +61,43 @@ if st.session_state.start_recording:
         async_processing=True,
     )
 
-    st.info("Recording from mic... speak clearly for at least 10 seconds.")
+    st.info("Recording... speak clearly for 5–10 seconds.")
 
     if st.button("✅ Process Last 10 Seconds"):
         if webrtc_ctx and webrtc_ctx.audio_processor:
             sr = 48000
-            raw_audio = np.concatenate(webrtc_ctx.audio_processor.frames)
+            frames = webrtc_ctx.audio_processor.buffer
 
-            if len(raw_audio) < sr * 2:
-                st.warning("You need at least a few seconds of audio.")
+            if not frames or len(frames) < 10:
+                st.warning("Not enough audio captured yet.")
             else:
-                raw_audio = raw_audio[-sr * 10:]
+                raw_audio = np.concatenate(frames)
 
-                # ----- Original Audio -----
+                # Get last 10 seconds (or less)
+                max_samples = sr * 10
+                if len(raw_audio) > max_samples:
+                    raw_audio = raw_audio[-max_samples:]
+
+                # Downsample to 16000 Hz for clarity
+                target_sr = 16000
+                raw_downsampled = resample(raw_audio, int(len(raw_audio) * target_sr / sr))
+
                 st.subheader("🔊 Original Mic Audio")
-                buf_orig = BytesIO()
-                sf.write(buf_orig, raw_audio, sr, format='wav')
-                st.audio(buf_orig)
-                plot_waveform(raw_audio, sr, "Original Mic Waveform")
+                buf_in = BytesIO()
+                sf.write(buf_in, raw_downsampled, target_sr, format='wav')
+                st.audio(buf_in)
+                plot_waveform(raw_downsampled, target_sr, "Original Mic Waveform")
 
-                # ----- Enhanced Audio -----
-                st.subheader("🧼 Enhanced Mic Audio (Clearer)")
-                cleaned = raw_audio
-                cleaned = normalize_audio(cleaned)
-                cleaned = reduce_noise(cleaned, sr)
-                cleaned = amplify_audio(cleaned)
-                cleaned = normalize_audio(cleaned)
+                # Enhance: denoise + amplify + normalize
+                enhanced = reduce_noise(raw_downsampled, target_sr)
+                enhanced = amplify_audio(enhanced)
+                enhanced = normalize_audio(enhanced)
 
-                buf_clean = BytesIO()
-                sf.write(buf_clean, cleaned.astype(np.float32), sr, format='wav')
-                st.audio(buf_clean)
-                plot_waveform(cleaned, sr, "Enhanced Mic Waveform")
+                st.subheader("🧼 Enhanced Mic Audio (Clear & Normal)")
+                buf_out = BytesIO()
+                sf.write(buf_out, enhanced, target_sr, format='wav')
+                st.audio(buf_out)
+                plot_waveform(enhanced, target_sr, "Enhanced Mic Waveform")
 
         else:
-            st.warning("Recording not started or no audio collected.")
-
+            st.warning("Mic not recording yet.")
