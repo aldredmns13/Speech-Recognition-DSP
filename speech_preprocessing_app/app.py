@@ -47,7 +47,7 @@ class AudioProcessor(AudioProcessorBase):
         audio = frame.to_ndarray().flatten()
         # Convert int16 to float32 in [-1,1] range immediately
         if audio.dtype != np.float32:
-            audio = audio.astype(np.float32) / 32768.0
+            audio = audio.astype(np.float32) / 10000
         self.frames.append(audio)
         return frame
 
