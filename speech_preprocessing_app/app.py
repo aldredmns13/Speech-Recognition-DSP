@@ -1,4 +1,6 @@
 import streamlit as st
+from streamlit_webrtc import webrtc_streamer, AudioProcessorBase
+import av
 import numpy as np
 import soundfile as sf
 import librosa
@@ -7,9 +9,8 @@ import matplotlib.pyplot as plt
 import noisereduce as nr
 from scipy.signal import butter, lfilter
 from io import BytesIO
-import pandas as pd
 
-# --- DSP Functions ---
+# DSP Helpers
 
 def normalize_audio(audio):
     max_val = np.max(np.abs(audio))
@@ -18,16 +19,15 @@ def normalize_audio(audio):
 def reduce_noise(audio, sr):
     return nr.reduce_noise(y=audio, sr=sr)
 
-def bandpass_filter(audio, sr, lowcut=300.0, highcut=3400.0, order=6):
+def bandpass_filter(audio, sr, lowcut=300.0, highcut=3400.0):
     nyq = 0.5 * sr
-    b, a = butter(order, [lowcut / nyq, highcut / nyq], btype='band')
+    low = lowcut / nyq
+    high = highcut / nyq
+    b, a = butter(6, [low, high], btype='band')
     return lfilter(b, a, audio)
 
 def amplify_audio(audio, gain=2.0):
     return np.clip(audio * gain, -1.0, 1.0)
-
-def extract_mfcc(audio, sr, n_mfcc=13):
-    return librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=n_mfcc)
 
 def plot_waveform(audio, sr, title):
     fig, ax = plt.subplots()
@@ -38,50 +38,59 @@ def plot_waveform(audio, sr, title):
     ax.set_ylabel("Amplitude")
     st.pyplot(fig)
 
-def plot_mfcc(mfcc, sr):
-    fig, ax = plt.subplots()
-    librosa.display.specshow(mfcc, sr=sr, x_axis='time')
-    ax.set_title("MFCC Features")
-    st.pyplot(fig)
+# Audio Processor
 
-# --- Streamlit UI ---
+class AudioProcessor(AudioProcessorBase):
+    def __init__(self):
+        self.frames = []
 
-st.title("🎧 Speech Preprocessing App (Upload Only)")
+    def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
+        audio = frame.to_ndarray().flatten().astype(np.float32) / 32768.0  # Convert int16 to float32
+        self.frames.append(audio)
+        return frame
 
-uploaded_file = st.file_uploader("Upload a WAV file (mono, 16-bit PCM preferred)", type=["wav"])
-TARGET_SR = 44100
+# Streamlit UI
 
-if uploaded_file:
-    audio, sr = librosa.load(uploaded_file, sr=None, mono=True)
+st.title("🎙️ Mic Recorder: Clean Speech Processing")
 
-    if sr != TARGET_SR:
-        audio = librosa.resample(audio, orig_sr=sr, target_sr=TARGET_SR)
-        sr = TARGET_SR
+sr = 48000
+st.markdown("Click start and speak clearly. You can process the last 10 seconds.")
 
-    st.subheader("🎧 Original Audio")
-    st.audio(uploaded_file)
-    plot_waveform(audio, sr, "Original Audio")
+webrtc_ctx = webrtc_streamer(
+    key="clean-mic",
+    audio_processor_factory=AudioProcessor,
+    media_stream_constraints={"audio": True, "video": False},
+    async_processing=True,
+)
 
-    # --- Processing Pipeline ---
-    audio = normalize_audio(audio)
-    audio = reduce_noise(audio, sr)
-    audio = bandpass_filter(audio, sr)
-    audio = amplify_audio(audio)
-    audio = normalize_audio(audio)
+if st.button("✅ Process Last 10 Seconds"):
+    if webrtc_ctx and webrtc_ctx.state.playing and webrtc_ctx.audio_processor:
+        raw_audio = np.concatenate(webrtc_ctx.audio_processor.frames)
 
-    # --- Playback + Save Cleaned ---
-    st.subheader("🧼 Cleaned Audio")
-    buf_out = BytesIO()
-    sf.write(buf_out, audio, sr, format='wav')
-    st.audio(buf_out)
-    plot_waveform(audio, sr, "Cleaned Audio")
+        if len(raw_audio) < sr * 5:
+            st.warning("Please speak for at least 5 seconds.")
+        else:
+            raw_audio = raw_audio[-sr * 10:]
 
-    # --- MFCC ---
-    mfcc = extract_mfcc(audio, sr)
-    st.subheader("📊 MFCC Features")
-    plot_mfcc(mfcc, sr)
-    mfcc_df = pd.DataFrame(mfcc.T)
-    st.download_button("Download MFCC CSV", mfcc_df.to_csv(index=False).encode(), "mfcc_features.csv")
+            st.subheader("🎧 Original Mic Audio")
+            buf_orig = BytesIO()
+            sf.write(buf_orig, raw_audio, sr, format='wav')
+            st.audio(buf_orig)
+            plot_waveform(raw_audio, sr, "Original Mic Waveform")
 
-    st.download_button("Download Cleaned Audio", buf_out.getvalue(), "cleaned_audio.wav", mime="audio/wav")
+            # Process pipeline
+            audio = normalize_audio(raw_audio)
+            audio = reduce_noise(audio, sr)
+            audio = bandpass_filter(audio, sr)
+            audio = amplify_audio(audio)
+            audio = normalize_audio(audio)
 
+            st.subheader("🧼 Cleaned & Enhanced Audio")
+            buf_clean = BytesIO()
+            sf.write(buf_clean, audio, sr, format='wav')
+            st.audio(buf_clean)
+            plot_waveform(audio, sr, "Cleaned Mic Waveform")
+
+            st.download_button("Download Cleaned Audio", buf_clean.getvalue(), "cleaned_audio.wav", mime="audio/wav")
+    else:
+        st.warning("Recording hasn't started or no audio available.")
