@@ -19,7 +19,7 @@ def normalize_audio(audio):
 def reduce_noise(audio, sr):
     return nr.reduce_noise(y=audio, sr=sr)
 
-def bandpass_filter(audio, sr, lowcut=300.0, highcut=3400.0):
+def bandpass_filter(audio, sr=48000, lowcut=300.0, highcut=3400.0):
     nyq = 0.5 * sr
     low = lowcut / nyq
     high = highcut / nyq
