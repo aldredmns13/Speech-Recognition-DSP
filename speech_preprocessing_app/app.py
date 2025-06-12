@@ -44,16 +44,27 @@ class AudioProcessor(AudioProcessorBase):
         self.frames = []
 
     def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
-        audio = frame.to_ndarray().flatten()
-        # Convert int16 to float32 in [-1,1] range immediately
-        if audio.dtype != np.float32:
-            audio = audio.astype(np.float32) / 10000
+        audio = frame.to_ndarray()
+
+        # Convert to mono if stereo
+        if audio.ndim > 1:
+            audio = audio.mean(axis=0)
+
+        # Convert int16/int32 to float32 in range [-1.0, 1.0]
+        if audio.dtype == np.int16:
+            audio = audio.astype(np.float32) / 32768.0
+        elif audio.dtype == np.int32:
+            audio = audio.astype(np.float32) / 2147483648.0
+        elif audio.dtype != np.float32:
+            audio = audio.astype(np.float32)
+
         self.frames.append(audio)
         return frame
 
-input_method = st.radio("Select Input Source", ["Upload .wav File", "Record via Microphone (Browser)"])
+# Sampling rate used throughout
+sr = 48000
 
-sr = 48000  # Make sure to keep this consistent everywhere
+input_method = st.radio("Select Input Source", ["Upload .wav File", "Record via Microphone (Browser)"])
 
 if input_method == "Upload .wav File":
     uploaded = st.file_uploader("Upload a WAV file", type=["wav"])
@@ -66,7 +77,6 @@ if input_method == "Upload .wav File":
         st.audio(uploaded)
         plot_waveform(audio, sr, "Original Audio Waveform")
 
-        # You can keep your filtering here if you want for files
         cleaned = normalize_audio(audio)
         st.subheader("🧼 Cleaned Audio")
         buf_out = BytesIO()
@@ -102,12 +112,10 @@ elif input_method == "Record via Microphone (Browser)":
 
                     st.subheader("🎧 Original Mic Audio")
                     buffer_in = BytesIO()
-                    # Save as float32 with sample rate 48000 - prevents pitch/speed change
                     sf.write(buffer_in, raw_audio.astype(np.float32), sr, format='wav')
                     st.audio(buffer_in)
                     plot_waveform(raw_audio, sr, "Original Mic Waveform")
 
-                    # Processed audio pipeline
                     audio_norm = normalize_audio(raw_audio)
                     audio_denoised = reduce_noise(audio_norm, sr)
                     audio_amplified = amplify_audio(audio_denoised)
@@ -118,6 +126,5 @@ elif input_method == "Record via Microphone (Browser)":
                     sf.write(buffer_out, cleaned.astype(np.float32), sr, format='wav')
                     st.audio(buffer_out)
                     plot_waveform(cleaned, sr, "Enhanced Mic Waveform")
-
             else:
                 st.warning("Recording has not started or no frames available.")
