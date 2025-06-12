@@ -44,13 +44,9 @@ class AudioProcessor(AudioProcessorBase):
         self.frames = []
 
     def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
-        audio = frame.to_ndarray()
+        audio = frame.to_ndarray().flatten()  # Handle planar/stereo/mono formats
 
-        # Convert to mono if stereo
-        if audio.ndim > 1:
-            audio = audio.mean(axis=0)
-
-        # Convert int16/int32 to float32 in range [-1.0, 1.0]
+        # Proper scaling to float32 [-1, 1]
         if audio.dtype == np.int16:
             audio = audio.astype(np.float32) / 32768.0
         elif audio.dtype == np.int32:
@@ -61,7 +57,7 @@ class AudioProcessor(AudioProcessorBase):
         self.frames.append(audio)
         return frame
 
-# Sampling rate used throughout
+# Use a consistent sample rate
 sr = 48000
 
 input_method = st.radio("Select Input Source", ["Upload .wav File", "Record via Microphone (Browser)"])
@@ -71,7 +67,7 @@ if input_method == "Upload .wav File":
     if uploaded:
         audio, sr = sf.read(uploaded)
         if audio.ndim > 1:
-            audio = audio[:, 0]
+            audio = audio[:, 0]  # Convert stereo to mono
 
         st.subheader("🎧 Original Audio")
         st.audio(uploaded)
@@ -116,6 +112,7 @@ elif input_method == "Record via Microphone (Browser)":
                     st.audio(buffer_in)
                     plot_waveform(raw_audio, sr, "Original Mic Waveform")
 
+                    # Processed audio
                     audio_norm = normalize_audio(raw_audio)
                     audio_denoised = reduce_noise(audio_norm, sr)
                     audio_amplified = amplify_audio(audio_denoised)
