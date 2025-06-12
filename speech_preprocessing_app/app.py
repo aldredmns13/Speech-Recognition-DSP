@@ -45,10 +45,7 @@ class AudioProcessor(AudioProcessorBase):
         self.frames = []
 
     def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
-        audio = frame.to_ndarray()
-        if audio.ndim > 1:
-            audio = np.mean(audio, axis=0)  # Convert stereo to mono
-        audio = audio.astype(np.float32) / 32768.0
+        audio = frame.to_ndarray().flatten().astype(np.float32) / 32000.0  # Convert int16 to float32
         self.frames.append(audio)
         return frame
 
@@ -56,7 +53,7 @@ class AudioProcessor(AudioProcessorBase):
 
 st.title("🎤 Speech Preprocessing App (Mic & File Upload)")
 
-sr = 16000
+sr = 48000
 input_method = st.radio("Choose input method:", ["🎙 Record via Microphone", "📁 Upload WAV File"])
 
 # --- Process Function (Shared) ---
@@ -105,10 +102,6 @@ elif input_method == "🎙 Record via Microphone":
 
     if st.button("✅ Process Mic Recording"):
         if webrtc_ctx and webrtc_ctx.state.playing and webrtc_ctx.audio_processor:
-            if not webrtc_ctx.audio_processor.frames:
-                st.error("No frames received. Try restarting the app or your mic permissions.")
-                st.stop()
-
             raw_audio = np.concatenate(webrtc_ctx.audio_processor.frames)
             if len(raw_audio) < sr * 2:
                 st.warning("Please record at least 2 seconds.")
