@@ -11,7 +11,7 @@ from scipy.signal import butter, lfilter
 import noisereduce as nr
 import pandas as pd
 
-# --- Audio DSP Functions ---
+# --- DSP Helpers ---
 
 def normalize_audio(audio):
     max_val = np.max(np.abs(audio))
@@ -31,8 +31,8 @@ def extract_mfcc(audio, sr, n_mfcc=13):
 
 def plot_waveform(audio, sr, title="Waveform"):
     fig, ax = plt.subplots()
-    times = np.linspace(0, len(audio) / sr, len(audio))
-    ax.plot(times, audio)
+    t = np.linspace(0, len(audio) / sr, len(audio))
+    ax.plot(t, audio)
     ax.set_title(title)
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Amplitude")
@@ -40,17 +40,23 @@ def plot_waveform(audio, sr, title="Waveform"):
 
 def plot_mfcc(mfcc, sr):
     fig, ax = plt.subplots()
-    img = librosa.display.specshow(mfcc, sr=sr, x_axis='time')
+    librosa.display.specshow(mfcc, sr=sr, x_axis='time')
     ax.set_title("MFCC Features")
-    fig.colorbar(img, ax=ax)
     st.pyplot(fig)
 
-# --- Streamlit App UI ---
+# --- Streamlit UI ---
 
-st.title("🧠 Speech Preprocessing App")
+st.title("🔊 Speech Preprocessing with MFCC + Enhancements")
 
-input_method = st.radio("Select Input Method", ["Upload .wav File", "Record via Microphone (Browser)"])
-sr = 48000
+st.markdown("""
+- ✅ Uploading WAV is **recommended** for clean quality.
+- 🎙️ Mic recording is **experimental** and may vary in quality depending on your browser/mic.
+""")
+
+input_method = st.radio("Choose Input Method", ["Upload .wav File (Recommended)", "Record via Microphone (Experimental)"])
+TARGET_SR = 44100
+
+# --- AudioProcessor for Mic Input ---
 
 class AudioProcessor(AudioProcessorBase):
     def __init__(self):
@@ -59,6 +65,7 @@ class AudioProcessor(AudioProcessorBase):
     def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
         audio = frame.to_ndarray().flatten()
 
+        # Normalize to float32 in [-1, 1]
         if audio.dtype == np.int16:
             audio = audio.astype(np.float32) / 32768.0
         elif audio.dtype == np.int32:
@@ -69,26 +76,31 @@ class AudioProcessor(AudioProcessorBase):
         self.frames.append(audio)
         return frame
 
+# --- Audio Source Handling ---
+
 audio = None
+actual_sr = None
 source_label = ""
 
-if input_method == "Upload .wav File":
+if input_method.startswith("Upload"):
     uploaded = st.file_uploader("Upload a WAV file", type=["wav"])
     if uploaded:
-        audio, sr = sf.read(uploaded)
-        if audio.ndim > 1:
-            audio = audio[:, 0]
+        y, actual_sr = librosa.load(uploaded, sr=None, mono=True)
+        st.write(f"🎯 Original file sample rate: {actual_sr} Hz")
+        if actual_sr != TARGET_SR:
+            y = librosa.resample(y, orig_sr=actual_sr, target_sr=TARGET_SR)
+        audio = y
         source_label = "Uploaded Audio"
         st.subheader("🎧 Original Uploaded Audio")
         st.audio(uploaded)
-        plot_waveform(audio, sr, "Original Audio Waveform")
+        plot_waveform(audio, TARGET_SR, "Original Audio Waveform")
 
-elif input_method == "Record via Microphone (Browser)":
+elif input_method.startswith("Record"):
     if "start_recording" not in st.session_state:
         st.session_state.start_recording = False
 
     if not st.session_state.start_recording:
-        if st.button("🎙️ Start Mic"):
+        if st.button("🎙️ Start Recording"):
             st.session_state.start_recording = True
             st.experimental_rerun()
 
@@ -96,54 +108,56 @@ elif input_method == "Record via Microphone (Browser)":
         webrtc_ctx = webrtc_streamer(
             key="mic",
             audio_processor_factory=AudioProcessor,
-            media_stream_constraints={"audio": True, "video": False},
+            media_stream_constraints={"audio": {"sampleRate": TARGET_SR}, "video": False},
             async_processing=True,
         )
 
-        st.info("Recording... Speak clearly for at least 10 seconds.")
+        st.info("Recording... Speak for ~5–10 seconds.")
 
         if st.button("✅ Process Mic Audio"):
             if webrtc_ctx and webrtc_ctx.audio_processor:
-                audio = np.concatenate(webrtc_ctx.audio_processor.frames)
-                if len(audio) < sr * 2:
-                    st.warning("Please record at least 2 seconds.")
-                else:
-                    audio = audio[-sr * 10:]
-                    source_label = "Recorded Mic Audio"
-                    st.subheader("🎧 Original Mic Audio")
-                    buffer_in = BytesIO()
-                    sf.write(buffer_in, audio, sr, format='wav')
-                    st.audio(buffer_in)
-                    plot_waveform(audio, sr, "Original Mic Waveform")
+                raw_audio = np.concatenate(webrtc_ctx.audio_processor.frames)
 
-# --- Process and Output ---
+                if len(raw_audio) < TARGET_SR * 2:
+                    st.warning("Please record for at least 2 seconds.")
+                else:
+                    raw_audio = raw_audio[-TARGET_SR * 10:]  # Use last 10 seconds
+                    audio = raw_audio
+                    source_label = "Recorded Mic Audio"
+                    actual_sr = TARGET_SR
+                    st.write(f"🎯 Using sample rate: {TARGET_SR} Hz")
+
+                    # Optional: Save + reload to validate
+                    buffer_test = BytesIO()
+                    sf.write(buffer_test, audio, TARGET_SR, format='wav')
+                    y, real_sr = librosa.load(BytesIO(buffer_test.getvalue()), sr=None)
+                    st.write(f"📏 Detected actual sample rate after save: {real_sr} Hz")
+
+                    st.subheader("🎧 Original Mic Audio")
+                    st.audio(buffer_test)
+                    plot_waveform(audio, TARGET_SR, "Original Mic Waveform")
+
+# --- Process Pipeline ---
 
 if audio is not None:
-    # Step 1: Normalize
+    st.subheader("🧠 Processing Pipeline")
     norm = normalize_audio(audio)
+    denoised = reduce_noise(norm, TARGET_SR)
+    filtered = bandpass_filter(denoised, TARGET_SR)
+    mfcc = extract_mfcc(filtered, TARGET_SR)
 
-    # Step 2: Noise Reduction
-    denoised = reduce_noise(norm, sr)
-
-    # Step 3: Bandpass Filtering
-    filtered = bandpass_filter(denoised, sr)
-
-    # Step 4: MFCC Extraction
-    mfcc = extract_mfcc(filtered, sr)
-
-    # Step 5: Output Results
+    # -- Output cleaned audio --
     st.subheader("🧼 Cleaned Audio Output")
-    cleaned_buf = BytesIO()
-    sf.write(cleaned_buf, filtered, sr, format='wav')
-    st.audio(cleaned_buf)
-    plot_waveform(filtered, sr, "Cleaned Audio Waveform")
+    buf_out = BytesIO()
+    sf.write(buf_out, filtered, TARGET_SR, format='wav')
+    st.audio(buf_out)
+    plot_waveform(filtered, TARGET_SR, "Cleaned Audio Waveform")
 
+    # -- MFCC Visualization & Export --
     st.subheader("📊 MFCC Features")
-    plot_mfcc(mfcc, sr)
+    plot_mfcc(mfcc, TARGET_SR)
 
-    # Optional: download buttons
-    st.download_button("📥 Download Cleaned Audio", data=cleaned_buf.getvalue(), file_name="cleaned_audio.wav", mime="audio/wav")
+    st.download_button("📥 Download Cleaned Audio", data=buf_out.getvalue(), file_name="cleaned_audio.wav", mime="audio/wav")
 
     mfcc_df = pd.DataFrame(mfcc).T
-    mfcc_csv = mfcc_df.to_csv(index=False).encode()
-    st.download_button("📥 Download MFCC CSV", data=mfcc_csv, file_name="mfcc_features.csv", mime="text/csv")
+    st.download_button("📥 Download MFCC Features CSV", data=mfcc_df.to_csv(index=False).encode(), file_name="mfcc_features.csv", mime="text/csv")
