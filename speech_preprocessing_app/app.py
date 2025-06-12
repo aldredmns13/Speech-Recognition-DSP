@@ -45,7 +45,7 @@ class AudioProcessor(AudioProcessorBase):
         self.frames = []
 
     def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
-        audio = frame.to_ndarray().flatten().astype(np.float32) / 48768.0  # Convert int16 to float32
+        audio = frame.to_ndarray().flatten().astype(np.float32) / 16000.0  # Convert int16 to float32
         self.frames.append(audio)
         return frame
 
