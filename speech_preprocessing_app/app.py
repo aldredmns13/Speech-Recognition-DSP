@@ -1,4 +1,3 @@
-
 import streamlit as st
 from streamlit_webrtc import webrtc_streamer, AudioProcessorBase
 import av
@@ -46,15 +45,12 @@ class AudioProcessor(AudioProcessorBase):
         self.frames = []
 
     def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
-        audio = frame.to_ndarray().mean(axis=0).astype(np.float32) / 32768.0
-        audio = normalize_audio(audio)
-        audio = bandpass_filter(audio, sr=16000)
-        audio = reduce_noise(audio, sr=16000)
+        audio = frame.to_ndarray()
+        if audio.ndim > 1:
+            audio = np.mean(audio, axis=0)  # Convert stereo to mono
+        audio = audio.astype(np.float32) / 32768.0
         self.frames.append(audio)
-        # Return dummy frame with silence (optional, as we use audio for analysis not streaming)
-        out_frame = av.AudioFrame.from_ndarray((audio * 32768.0).astype(np.int16), layout="mono")
-        out_frame.sample_rate = 16000
-        return out_frame
+        return frame
 
 # --- Streamlit UI ---
 
@@ -109,6 +105,10 @@ elif input_method == "🎙 Record via Microphone":
 
     if st.button("✅ Process Mic Recording"):
         if webrtc_ctx and webrtc_ctx.state.playing and webrtc_ctx.audio_processor:
+            if not webrtc_ctx.audio_processor.frames:
+                st.error("No frames received. Try restarting the app or your mic permissions.")
+                st.stop()
+
             raw_audio = np.concatenate(webrtc_ctx.audio_processor.frames)
             if len(raw_audio) < sr * 2:
                 st.warning("Please record at least 2 seconds.")
