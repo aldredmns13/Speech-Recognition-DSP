@@ -22,4 +22,5 @@ pip install streamlit-webrtc
 
 pip install librosa
 
-pip install streamlit-audio-recorder
+
+pip install streamlit streamlit-audio-recorder librosa matplotlib soundfile noisereduce
