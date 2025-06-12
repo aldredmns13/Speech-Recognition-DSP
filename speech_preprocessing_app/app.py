@@ -40,22 +40,21 @@ def plot_waveform(audio, sr, title):
 # --- Mic Recorder with Real-Time Denoising ---
 
 class AudioProcessor(AudioProcessorBase):
-    def __init__(self):
+    def __init__(self) -> None:
         self.frames = []
 
     def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
-        audio = frame.to_ndarray().flatten().astype(np.float32) / 32768.0
+        audio = frame.to_ndarray().mean(axis=0).astype(np.float32) / 32768.0  # mono
         self.frames.append(audio)
 
-        # Real-time denoising for output playback
+        # Real-time playback with light denoise
         denoised = reduce_noise(audio, sr=16000)
-        denoised = amplify_audio(denoised)
-        denoised = normalize_audio(denoised)
+        denoised = normalize_audio(amplify_audio(denoised))
 
         int16_audio = (denoised * 32767).astype(np.int16)
-        new_frame = av.AudioFrame.from_ndarray(int16_audio, layout="mono")
-        new_frame.sample_rate = 16000
-        return new_frame
+        out_frame = av.AudioFrame.from_ndarray(int16_audio, layout="mono")
+        out_frame.sample_rate = 16000
+        return out_frame
 
 # --- Streamlit UI ---
 
@@ -96,11 +95,11 @@ elif input_method == "🎙 Record via Microphone":
         key="mic",
         audio_processor_factory=AudioProcessor,
         media_stream_constraints={"audio": True, "video": False},
-        async_processing=True,
+        async_processing=False,
     )
 
     if st.button("✅ Process Mic Recording"):
-        if webrtc_ctx and webrtc_ctx.state.playing and webrtc_ctx.audio_processor:
+        if webrtc_ctx and webrtc_ctx.state.playing and webrtc_ctx.audio_processor and webrtc_ctx.audio_processor.frames:
             raw_audio = np.concatenate(webrtc_ctx.audio_processor.frames)
             if len(raw_audio) < sr * 2:
                 st.warning("Please record at least 2 seconds.")
@@ -108,4 +107,4 @@ elif input_method == "🎙 Record via Microphone":
                 audio = raw_audio[-sr * 10:]  # last 10 seconds
                 process_and_display(audio, sr)
         else:
-            st.warning("No audio data available.")
+            st.warning("No audio data available. Try speaking and then press the button.")
