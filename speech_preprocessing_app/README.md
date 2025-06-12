@@ -20,3 +20,4 @@ pip install streamlit-webrtc av noisereduce numpy matplotlib
 
 pip install streamlit-webrtc
 
+pip install librosa
