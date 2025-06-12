@@ -45,7 +45,7 @@ class AudioProcessor(AudioProcessorBase):
         self.frames = []
 
     def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
-        audio = frame.to_ndarray().mean(axis=0).astype(np.float32) / 32768.0
+        audio = frame.to_ndarray().flatten().astype(np.float32) / 32000.0  # Convert int16 to float32
         self.frames.append(audio)
         return frame
 
@@ -53,7 +53,7 @@ class AudioProcessor(AudioProcessorBase):
 
 st.title("🎤 Speech Preprocessing App (Mic & File Upload)")
 
-sr = 16000
+sr = 48000
 input_method = st.radio("Choose input method:", ["🎙 Record via Microphone", "📁 Upload WAV File"])
 
 # --- Process Function (Shared) ---
@@ -66,17 +66,17 @@ def process_and_display(audio, sr):
     plot_waveform(audio, sr, "Original Audio")
 
     # Apply processing steps
-    audio_clean = normalize_audio(audio)
-    audio_clean = reduce_noise(audio_clean, sr)
-    audio_clean = bandpass_filter(audio_clean, sr)
-    audio_clean = amplify_audio(audio_clean)
-    audio_clean = normalize_audio(audio_clean)
+    audio = normalize_audio(audio)
+    audio = reduce_noise(audio, sr)
+    audio = bandpass_filter(audio, sr)
+    audio = amplify_audio(audio)
+    audio = normalize_audio(audio)
 
     st.subheader("🧼 Cleaned Audio")
     buf_clean = BytesIO()
-    sf.write(buf_clean, audio_clean, sr, format='wav')
+    sf.write(buf_clean, audio, sr, format='wav')
     st.audio(buf_clean)
-    plot_waveform(audio_clean, sr, "Cleaned Audio")
+    plot_waveform(audio, sr, "Cleaned Audio")
 
     st.download_button("⬇️ Download Cleaned Audio", buf_clean.getvalue(), "cleaned_audio.wav", mime="audio/wav")
 
@@ -93,7 +93,7 @@ if input_method == "📁 Upload WAV File":
 elif input_method == "🎙 Record via Microphone":
     st.info("Click start and speak for 5–10 seconds. Then press 'Process'.")
 
-    ctx = webrtc_streamer(
+    webrtc_ctx = webrtc_streamer(
         key="mic",
         audio_processor_factory=AudioProcessor,
         media_stream_constraints={"audio": True, "video": False},
@@ -101,12 +101,14 @@ elif input_method == "🎙 Record via Microphone":
     )
 
     if st.button("✅ Process Mic Recording"):
-        if ctx and ctx.state.playing and ctx.audio_processor:
-            raw_audio = np.concatenate(ctx.audio_processor.frames)
+        if webrtc_ctx and webrtc_ctx.state.playing and webrtc_ctx.audio_processor:
+            raw_audio = np.concatenate(webrtc_ctx.audio_processor.frames)
             if len(raw_audio) < sr * 2:
                 st.warning("Please record at least 2 seconds.")
             else:
                 audio = raw_audio[-sr * 10:]  # last 10 seconds max
                 process_and_display(audio, sr)
         else:
-            st.warning("No audio data available. Make sure the microphone permission is granted and you're speaking during recording.")
+            st.warning("No audio data available.")
+
+
