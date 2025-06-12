@@ -4,13 +4,12 @@ import av
 import numpy as np
 import soundfile as sf
 import librosa
-import librosa.display
 import matplotlib.pyplot as plt
 import noisereduce as nr
 from scipy.signal import butter, lfilter
 from io import BytesIO
 
-# --- DSP Helper Functions ---
+# --- DSP Helpers ---
 
 def normalize_audio(audio):
     max_val = np.max(np.abs(audio))
@@ -38,25 +37,31 @@ def plot_waveform(audio, sr, title):
     ax.set_ylabel("Amplitude")
     st.pyplot(fig)
 
-# --- AudioProcessor for Microphone ---
+# --- Mic Recorder with Real-Time Denoising ---
 
 class AudioProcessor(AudioProcessorBase):
     def __init__(self):
         self.frames = []
 
     def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
-        audio = frame.to_ndarray().flatten().astype(np.float32) / 32000.0  # Convert int16 to float32
+        audio = frame.to_ndarray().flatten().astype(np.float32) / 32768.0
         self.frames.append(audio)
-        return frame
+
+        # Real-time denoising for output playback
+        denoised = reduce_noise(audio, sr=16000)
+        denoised = amplify_audio(denoised)
+        denoised = normalize_audio(denoised)
+
+        int16_audio = (denoised * 32767).astype(np.int16)
+        new_frame = av.AudioFrame.from_ndarray(int16_audio, layout="mono")
+        new_frame.sample_rate = 16000
+        return new_frame
 
 # --- Streamlit UI ---
 
-st.title("🎤 Speech Preprocessing App (Mic & File Upload)")
-
-sr = 48000
+st.title("🎤 Speech Preprocessing (Mic + File Upload + Real-time Denoise)")
+sr = 16000
 input_method = st.radio("Choose input method:", ["🎙 Record via Microphone", "📁 Upload WAV File"])
-
-# --- Process Function (Shared) ---
 
 def process_and_display(audio, sr):
     st.subheader("🔊 Original Audio")
@@ -65,7 +70,6 @@ def process_and_display(audio, sr):
     st.audio(buf_orig)
     plot_waveform(audio, sr, "Original Audio")
 
-    # Apply processing steps
     audio = normalize_audio(audio)
     audio = reduce_noise(audio, sr)
     audio = bandpass_filter(audio, sr)
@@ -77,10 +81,7 @@ def process_and_display(audio, sr):
     sf.write(buf_clean, audio, sr, format='wav')
     st.audio(buf_clean)
     plot_waveform(audio, sr, "Cleaned Audio")
-
     st.download_button("⬇️ Download Cleaned Audio", buf_clean.getvalue(), "cleaned_audio.wav", mime="audio/wav")
-
-# --- File Upload Path ---
 
 if input_method == "📁 Upload WAV File":
     uploaded = st.file_uploader("Upload a WAV file", type=["wav"])
@@ -88,10 +89,8 @@ if input_method == "📁 Upload WAV File":
         y, file_sr = librosa.load(uploaded, sr=sr, mono=True)
         process_and_display(y, sr)
 
-# --- Microphone Path ---
-
 elif input_method == "🎙 Record via Microphone":
-    st.info("Click start and speak for 5–10 seconds. Then press 'Process'.")
+    st.info("Start speaking, then press Process after ~5–10 seconds.")
 
     webrtc_ctx = webrtc_streamer(
         key="mic",
@@ -106,7 +105,7 @@ elif input_method == "🎙 Record via Microphone":
             if len(raw_audio) < sr * 2:
                 st.warning("Please record at least 2 seconds.")
             else:
-                audio = raw_audio[-sr * 10:]  # last 10 seconds max
+                audio = raw_audio[-sr * 10:]  # last 10 seconds
                 process_and_display(audio, sr)
         else:
             st.warning("No audio data available.")
