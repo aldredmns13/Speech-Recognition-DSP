@@ -1,5 +1,6 @@
 streamlit
 streamlit_webrtc
+streamlit run Home.py
 numpy
 soundfile
 noisereduce
