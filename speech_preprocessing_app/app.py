@@ -30,9 +30,9 @@ def amplify_audio(audio, gain=2.0):
     return np.clip(audio * gain, -1.0, 1.0)
 
 def plot_waveform(audio, sr, title):
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(6, 2))
     t = np.linspace(0, len(audio) / sr, len(audio))
-    ax.plot(t, audio)
+    ax.plot(t, audio, linewidth=0.8)
     ax.set_title(title)
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Amplitude")
@@ -45,53 +45,60 @@ class AudioProcessor(AudioProcessorBase):
         self.frames = []
 
     def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
-        audio = frame.to_ndarray().flatten().astype(np.float32) / 32000.0  # Convert int16 to float32
+        audio = frame.to_ndarray().flatten().astype(np.float32) / 32000.0
         self.frames.append(audio)
         return frame
 
 # --- Streamlit UI ---
 
-st.title("🎤 Speech Preprocessing App (Mic & File Upload)")
+st.set_page_config(page_title="Speech Preprocessing App", layout="wide")
+st.title("🎤 Speech Preprocessing App")
+st.caption("Record or upload speech and enhance it with noise reduction, filtering, and normalization.")
 
 sr = 48000
-input_method = st.radio("Choose input method:", ["🎙 Record via Microphone", "📁 Upload WAV File"])
+input_method = st.radio("🎚 Select Input Method:", ["🎙 Microphone", "📁 Upload WAV File"], horizontal=True)
 
-# --- Process Function (Shared) ---
+# --- Process Function ---
 
 def process_and_display(audio, sr):
-    st.subheader("🔊 Original Audio")
-    buf_orig = BytesIO()
-    sf.write(buf_orig, audio, sr, format='wav')
-    st.audio(buf_orig)
-    plot_waveform(audio, sr, "Original Audio")
+    with st.expander("🎧 Original Audio and Waveform", expanded=True):
+        buf_orig = BytesIO()
+        sf.write(buf_orig, audio, sr, format='wav')
+        st.audio(buf_orig, format='audio/wav')
+        plot_waveform(audio, sr, "Original Audio")
 
-    # Apply processing steps
+    # Processing pipeline
     audio = normalize_audio(audio)
     audio = reduce_noise(audio, sr)
     audio = bandpass_filter(audio, sr)
     audio = amplify_audio(audio)
     audio = normalize_audio(audio)
 
-    st.subheader("🧼 Cleaned Audio")
-    buf_clean = BytesIO()
-    sf.write(buf_clean, audio, sr, format='wav')
-    st.audio(buf_clean)
-    plot_waveform(audio, sr, "Cleaned Audio")
+    with st.expander("✨ Cleaned Audio and Waveform", expanded=True):
+        buf_clean = BytesIO()
+        sf.write(buf_clean, audio, sr, format='wav')
+        st.audio(buf_clean, format='audio/wav')
+        plot_waveform(audio, sr, "Cleaned Audio")
 
     st.download_button("⬇️ Download Cleaned Audio", buf_clean.getvalue(), "cleaned_audio.wav", mime="audio/wav")
 
 # --- File Upload Path ---
 
 if input_method == "📁 Upload WAV File":
-    uploaded = st.file_uploader("Upload a WAV file", type=["wav"])
-    if uploaded:
-        y, file_sr = librosa.load(uploaded, sr=sr, mono=True)
-        process_and_display(y, sr)
+    with st.container():
+        st.subheader("📤 Upload Your WAV File")
+        uploaded = st.file_uploader("Choose a WAV file (Mono preferred)", type=["wav"])
+        if uploaded:
+            y, file_sr = librosa.load(uploaded, sr=sr, mono=True)
+            st.success("✅ File uploaded successfully.")
+            if st.button("🔁 Process Uploaded Audio"):
+                process_and_display(y, sr)
 
 # --- Microphone Path ---
 
-elif input_method == "🎙 Record via Microphone":
-    st.info("Click start and speak for 5–10 seconds. Then press 'Process'.")
+elif input_method == "🎙 Microphone":
+    st.subheader("🎙 Record via Microphone")
+    st.markdown("Click `Start` below to begin recording. After recording for a few seconds, click `✅ Process Mic Recording`.")
 
     webrtc_ctx = webrtc_streamer(
         key="mic",
@@ -104,11 +111,9 @@ elif input_method == "🎙 Record via Microphone":
         if webrtc_ctx and webrtc_ctx.state.playing and webrtc_ctx.audio_processor:
             raw_audio = np.concatenate(webrtc_ctx.audio_processor.frames)
             if len(raw_audio) < sr * 2:
-                st.warning("Please record at least 2 seconds.")
+                st.warning("⚠️ Please record at least 2 seconds of audio.")
             else:
-                audio = raw_audio[-sr * 10:]  # last 10 seconds max
+                audio = raw_audio[-sr * 10:]  # Use last 10 seconds max
                 process_and_display(audio, sr)
         else:
-            st.warning("No audio data available.")
-
-
+            st.warning("⚠️ No audio data available. Please start recording first.")
