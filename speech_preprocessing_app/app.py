@@ -4,14 +4,12 @@ import av
 import numpy as np
 import soundfile as sf
 import librosa
-import librosa.display
 import matplotlib.pyplot as plt
 import noisereduce as nr
 from scipy.signal import butter, lfilter
 from io import BytesIO
 
-# --- DSP Helper Functions ---
-
+# --- DSP Functions ---
 def normalize_audio(audio):
     max_val = np.max(np.abs(audio))
     return audio if max_val == 0 else audio / max_val * 0.9
@@ -30,16 +28,15 @@ def amplify_audio(audio, gain=2.0):
     return np.clip(audio * gain, -1.0, 1.0)
 
 def plot_waveform(audio, sr, title):
-    fig, ax = plt.subplots(figsize=(6, 2))
+    fig, ax = plt.subplots(figsize=(5, 2))
     t = np.linspace(0, len(audio) / sr, len(audio))
-    ax.plot(t, audio, linewidth=0.8)
+    ax.plot(t, audio, linewidth=1)
     ax.set_title(title)
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Amplitude")
     st.pyplot(fig)
 
-# --- AudioProcessor for Microphone ---
-
+# --- AudioProcessor Class ---
 class AudioProcessor(AudioProcessorBase):
     def __init__(self):
         self.frames = []
@@ -49,71 +46,88 @@ class AudioProcessor(AudioProcessorBase):
         self.frames.append(audio)
         return frame
 
-# --- Streamlit UI ---
-
+# --- Streamlit Page Settings ---
 st.set_page_config(page_title="Speech Preprocessing App", layout="wide")
-st.title("🎤 Speech Preprocessing App")
-st.caption("Record or upload speech and enhance it with noise reduction, filtering, and normalization.")
+st.markdown("<h1 style='text-align: center; color: #4CAF50;'>🎤 Speech Recognition Preprocessing</h1>", unsafe_allow_html=True)
+st.markdown("<h3 style='text-align: center;'>“Clean your noisy audio with us.”</h3>", unsafe_allow_html=True)
+st.divider()
+
+# --- Input Choice Section ---
+st.subheader("📌 Choose Your Input Method")
+col1, col2 = st.columns(2)
 
 sr = 48000
-input_method = st.radio("🎚 Select Input Method:", ["🎙 Microphone", "📁 Upload WAV File"], horizontal=True)
+audio_data = None
 
-# --- Process Function ---
+with col1:
+    mic_record = st.button("🎙 Speak Using Microphone")
 
-def process_and_display(audio, sr):
-    with st.expander("🎧 Original Audio and Waveform", expanded=True):
-        buf_orig = BytesIO()
-        sf.write(buf_orig, audio, sr, format='wav')
-        st.audio(buf_orig, format='audio/wav')
-        plot_waveform(audio, sr, "Original Audio")
+with col2:
+    uploaded_file = st.file_uploader("📁 Upload Audio File", type=["wav"])
 
-    # Processing pipeline
-    audio = normalize_audio(audio)
-    audio = reduce_noise(audio, sr)
-    audio = bandpass_filter(audio, sr)
-    audio = amplify_audio(audio)
-    audio = normalize_audio(audio)
-
-    with st.expander("✨ Cleaned Audio and Waveform", expanded=True):
-        buf_clean = BytesIO()
-        sf.write(buf_clean, audio, sr, format='wav')
-        st.audio(buf_clean, format='audio/wav')
-        plot_waveform(audio, sr, "Cleaned Audio")
-
-    st.download_button("⬇️ Download Cleaned Audio", buf_clean.getvalue(), "cleaned_audio.wav", mime="audio/wav")
-
-# --- File Upload Path ---
-
-if input_method == "📁 Upload WAV File":
-    with st.container():
-        st.subheader("📤 Upload Your WAV File")
-        uploaded = st.file_uploader("Choose a WAV file (Mono preferred)", type=["wav"])
-        if uploaded:
-            y, file_sr = librosa.load(uploaded, sr=sr, mono=True)
-            st.success("✅ File uploaded successfully.")
-            if st.button("🔁 Process Uploaded Audio"):
-                process_and_display(y, sr)
-
-# --- Microphone Path ---
-
-elif input_method == "🎙 Microphone":
-    st.subheader("🎙 Record via Microphone")
-    st.markdown("Click `Start` below to begin recording. After recording for a few seconds, click `✅ Process Mic Recording`.")
-
+# --- Microphone Recording ---
+if mic_record:
+    st.info("Click 'Start' below to record. Speak for 5–10 seconds, then click '✅ Process'.")
     webrtc_ctx = webrtc_streamer(
         key="mic",
         audio_processor_factory=AudioProcessor,
         media_stream_constraints={"audio": True, "video": False},
         async_processing=True,
     )
-
     if st.button("✅ Process Mic Recording"):
         if webrtc_ctx and webrtc_ctx.state.playing and webrtc_ctx.audio_processor:
             raw_audio = np.concatenate(webrtc_ctx.audio_processor.frames)
             if len(raw_audio) < sr * 2:
-                st.warning("⚠️ Please record at least 2 seconds of audio.")
+                st.warning("Please record at least 2 seconds.")
             else:
-                audio = raw_audio[-sr * 10:]  # Use last 10 seconds max
-                process_and_display(audio, sr)
+                audio_data = raw_audio[-sr * 10:]  # Last 10 seconds
         else:
-            st.warning("⚠️ No audio data available. Please start recording first.")
+            st.warning("No audio detected.")
+
+# --- File Upload Handling ---
+elif uploaded_file:
+    y, _ = librosa.load(uploaded_file, sr=sr, mono=True)
+    audio_data = y
+
+# --- Processing and Display ---
+if audio_data is not None:
+    st.markdown("## 🔊 Your Audio")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**🎧 Original Audio**")
+        buf_orig = BytesIO()
+        sf.write(buf_orig, audio_data, sr, format='wav')
+        st.audio(buf_orig, format='audio/wav')
+        plot_waveform(audio_data, sr, "Original")
+
+    with col2:
+        st.markdown("🛠️ **Cleaning Your Audio...**")
+        clean_audio = normalize_audio(audio_data)
+        clean_audio = reduce_noise(clean_audio, sr)
+        clean_audio = bandpass_filter(clean_audio, sr)
+        clean_audio = amplify_audio(clean_audio)
+        clean_audio = normalize_audio(clean_audio)
+
+        buf_clean = BytesIO()
+        sf.write(buf_clean, clean_audio, sr, format='wav')
+
+        st.success("✅ Cleaning Complete!")
+
+    st.divider()
+    st.markdown("## 🔁 Know the Difference")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("🪞 **Old Audio**")
+        st.audio(buf_orig, format='audio/wav')
+        plot_waveform(audio_data, sr, "Before Cleaning")
+
+    with col2:
+        st.markdown("✨ **Updated Audio**")
+        st.audio(buf_clean, format='audio/wav')
+        plot_waveform(clean_audio, sr, "After Cleaning")
+
+    st.download_button("⬇️ Download Cleaned Audio", buf_clean.getvalue(), "cleaned_audio.wav", mime="audio/wav")
+
+    
