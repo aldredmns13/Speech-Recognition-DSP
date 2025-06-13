@@ -1,28 +1,9 @@
-# 🎙️ Speech Recognition Preprocessing Module
-
-This is a Streamlit-based app for uploading or recording speech audio, filtering background noise, and plotting the original vs filtered waveforms using MATLAB.
-
-
-
-pip install -r requirements.txt
-
-
-
-cd "C:\Program Files\MATLAB\R202Xx\extern\engines\python"
-python setup.py install
-
-
-
-streamlit run app.py
-
-
-pip install streamlit-webrtc av noisereduce numpy matplotlib
-
-pip install streamlit-webrtc
-
-pip install librosa
-
-
-pip install streamlit streamlit-audio-recorder
-
-
+pip install streamlit==1.35.0
+pip install streamlit-webrtc==0.45.0
+pip install av==10.0.0
+pip install numpy==1.24.4
+pip install soundfile==0.12.1
+pip install librosa==0.10.1
+pip install matplotlib==3.7.5
+pip install noisereduce==3.0.0
+pip install scipy==1.10.1
