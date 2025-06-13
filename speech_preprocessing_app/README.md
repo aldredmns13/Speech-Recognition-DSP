@@ -24,3 +24,6 @@ pip install librosa
 
 
 pip install streamlit streamlit-audio-recorder
+
+pip show streamlit
+
