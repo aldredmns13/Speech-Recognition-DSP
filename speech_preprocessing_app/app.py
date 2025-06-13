@@ -110,5 +110,3 @@ elif input_method == "🎙 Record via Microphone":
                 process_and_display(audio, sr)
         else:
             st.warning("No audio data available.")
-
-    
