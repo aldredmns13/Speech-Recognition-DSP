@@ -1,3 +1,41 @@
+# Folder structure:
+# speech_preprocessing_app/
+# ├── Home.py
+# └── pages/
+#     └── NewJourney.py
+
+# --------------------------
+# File: Home.py
+# --------------------------
+import streamlit as st
+
+st.set_page_config(page_title="Speech Recognition Preprocessing", layout="centered")
+
+st.markdown("""
+    <h1 style='text-align: center; color: #4CAF50;'>🎤 Speech Recognition Preprocessing</h1>
+    <h3 style='text-align: center;'>Clean your noisy audio with us</h3>
+""", unsafe_allow_html=True)
+
+st.image("https://img.icons8.com/clouds/500/audio-wave--v1.png", width=250)
+
+st.markdown("### ➡️ Choose an Option Below")
+
+if st.button("🎙 Start Audio Cleaning Journey"):
+    st.switch_page("pages/NewJourney.py")
+
+st.markdown("---")
+
+st.markdown("""
+    ℹ️ **This tool allows you to:**
+    - Record audio or upload a file
+    - Clean the audio using DSP
+    - Compare before and after
+""")
+
+
+# --------------------------
+# File: pages/NewJourney.py
+# --------------------------
 import streamlit as st
 from streamlit_webrtc import webrtc_streamer, AudioProcessorBase
 import av
@@ -9,7 +47,7 @@ import noisereduce as nr
 from scipy.signal import butter, lfilter
 from io import BytesIO
 
-# --- DSP Functions ---
+# DSP Functions
 def normalize_audio(audio):
     max_val = np.max(np.abs(audio))
     return audio if max_val == 0 else audio / max_val * 0.9
@@ -36,7 +74,7 @@ def plot_waveform(audio, sr, title):
     ax.set_ylabel("Amplitude")
     st.pyplot(fig)
 
-# --- AudioProcessor Class ---
+# Audio Processor Class
 class AudioProcessor(AudioProcessorBase):
     def __init__(self):
         self.frames = []
@@ -46,28 +84,24 @@ class AudioProcessor(AudioProcessorBase):
         self.frames.append(audio)
         return frame
 
-# --- Streamlit Page Settings ---
-st.set_page_config(page_title="Speech Preprocessing App", layout="wide")
-st.markdown("<h1 style='text-align: center; color: #4CAF50;'>🎤 Speech Recognition Preprocessing</h1>", unsafe_allow_html=True)
-st.markdown("<h3 style='text-align: center;'>“Clean your noisy audio with us.”</h3>", unsafe_allow_html=True)
-st.divider()
+# Streamlit UI Page
+st.set_page_config(page_title="Audio Cleaning Journey", layout="wide")
+st.title("🧼 Clean Your Audio")
 
-# --- Input Choice Section ---
 st.subheader("📌 Choose Your Input Method")
 col1, col2 = st.columns(2)
-
 sr = 48000
 audio_data = None
 
 with col1:
-    mic_record = st.button("🎙 Speak Using Microphone")
+    mic_record = st.button("🎙 Record with Microphone")
 
 with col2:
     uploaded_file = st.file_uploader("📁 Upload Audio File", type=["wav"])
 
-# --- Microphone Recording ---
+# Microphone Handling
 if mic_record:
-    st.info("Click 'Start' below to record. Speak for 5–10 seconds, then click '✅ Process'.")
+    st.info("Click 'Start' below, speak for 5–10 seconds, then click '✅ Process'.")
     webrtc_ctx = webrtc_streamer(
         key="mic",
         audio_processor_factory=AudioProcessor,
@@ -80,20 +114,20 @@ if mic_record:
             if len(raw_audio) < sr * 2:
                 st.warning("Please record at least 2 seconds.")
             else:
-                audio_data = raw_audio[-sr * 10:]  # Last 10 seconds
+                audio_data = raw_audio[-sr * 10:]
         else:
             st.warning("No audio detected.")
 
-# --- File Upload Handling ---
+# File Upload Handling
 elif uploaded_file:
     y, _ = librosa.load(uploaded_file, sr=sr, mono=True)
     audio_data = y
 
-# --- Processing and Display ---
+# Audio Processing
 if audio_data is not None:
     st.markdown("## 🔊 Your Audio")
-
     col1, col2 = st.columns(2)
+
     with col1:
         st.markdown("**🎧 Original Audio**")
         buf_orig = BytesIO()
@@ -111,7 +145,6 @@ if audio_data is not None:
 
         buf_clean = BytesIO()
         sf.write(buf_clean, clean_audio, sr, format='wav')
-
         st.success("✅ Cleaning Complete!")
 
     st.divider()
@@ -129,5 +162,6 @@ if audio_data is not None:
         plot_waveform(clean_audio, sr, "After Cleaning")
 
     st.download_button("⬇️ Download Cleaned Audio", buf_clean.getvalue(), "cleaned_audio.wav", mime="audio/wav")
+
 
     
